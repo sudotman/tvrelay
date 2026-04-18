@@ -11,13 +11,14 @@ import {
   buildSerial,
   chunkAdbText,
   deriveConnectionState,
+  parseForegroundApp,
   parseAdbDevices,
   parseAdbVersion,
   parseLaunchableApps
 } from './parsers'
 
 const { Apk } = pkg
-import type { ConnectionState, SavedDevice } from '@shared/types'
+import type { ConnectionState, ForegroundApp, SavedDevice } from '@shared/types'
 
 const execFileAsync = promisify(execFile)
 
@@ -113,6 +114,38 @@ export class AdbClient {
 
   async launchApp(serial: string, app: LaunchableApp): Promise<void> {
     await this.runSerial(serial, ['shell', 'am', 'start', '-n', app.activity])
+  }
+
+  async launchPackage(serial: string, packageName: string): Promise<void> {
+    await this.runSerial(serial, ['shell', 'monkey', '-p', packageName, '-c', 'android.intent.category.LAUNCHER', '1'])
+  }
+
+  async openAppInfo(serial: string, packageName: string): Promise<void> {
+    await this.runSerial(serial, [
+      'shell',
+      'am',
+      'start',
+      '-a',
+      'android.settings.APPLICATION_DETAILS_SETTINGS',
+      '-d',
+      `package:${packageName}`
+    ])
+  }
+
+  async getForegroundApp(serial: string): Promise<ForegroundApp | null> {
+    const windowDump = await this.runSerial(serial, ['shell', 'dumpsys', 'window', 'windows'], {
+      timeoutMs: 12_000
+    })
+    const parsed = parseForegroundApp(windowDump.stdout)
+
+    if (parsed) {
+      return parsed
+    }
+
+    const activityDump = await this.runSerial(serial, ['shell', 'dumpsys', 'activity', 'activities'], {
+      timeoutMs: 12_000
+    })
+    return parseForegroundApp(activityDump.stdout)
   }
 
   private async runSerial(

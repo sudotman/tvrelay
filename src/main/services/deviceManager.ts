@@ -1,18 +1,22 @@
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import type {
+  BackendHealthSnapshot,
   BeginNativePairingInput,
   ConnectDeviceInput,
   ConnectionBackend,
   ConnectionState,
+  DeviceHealthStatus,
   DiscoveredNativeDevice,
+  HealthIssue,
   NativeRemoteConfig,
   PairDeviceInput,
   PendingNativePairing,
+  RecommendedAction,
   SaveDeviceInput,
   SavedDevice
 } from '@shared/types'
-import { buildSerial, shouldAttemptReconnect } from './adb/parsers'
+import { buildSerial, deriveConnectionState, shouldAttemptReconnect } from './adb/parsers'
 import type { AdbClient } from './adb/adbClient'
 import type { DeviceStore } from './deviceStore'
 import type { NativeRemoteService } from './native/nativeRemoteService'
@@ -21,6 +25,8 @@ type DeviceManagerEvents = {
   connectionState: [ConnectionState]
   devicesChanged: [SavedDevice[]]
 }
+
+const RECENT_APPS_LIMIT = 8
 
 function canUseNative(device: SavedDevice): boolean {
   return Boolean(device.nativeRemote)
@@ -44,6 +50,14 @@ function getBackendOrder(device: SavedDevice): ConnectionBackend[] {
   return ['native', 'adb']
 }
 
+function createBackendHealthSnapshot(overrides?: Partial<BackendHealthSnapshot>): BackendHealthSnapshot {
+  return {
+    available: false,
+    ready: false,
+    ...overrides
+  }
+}
+
 interface StoredDeviceDraft {
   id?: string
   name: string
@@ -57,6 +71,9 @@ interface StoredDeviceDraft {
   lastConnectedAt?: SavedDevice['lastConnectedAt']
   lastConnectedBackend?: SavedDevice['lastConnectedBackend']
   cachedApps?: SavedDevice['cachedApps']
+  favorites?: SavedDevice['favorites']
+  recentApps?: SavedDevice['recentApps']
+  backendHealth?: SavedDevice['backendHealth']
 }
 
 export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
@@ -77,17 +94,24 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
   async init(): Promise<void> {
     const snapshot = this.store.load()
-    this.savedDevices = snapshot.savedDevices.map((device) => ({
-      ...device,
-      connectPort: device.connectPort ?? 5555,
-      mode: device.mode ?? 'connect',
-      preferredBackend: device.preferredBackend ?? 'adb',
-      adbEnabled: device.adbEnabled ?? true
-    }))
+    this.savedDevices = snapshot.savedDevices.map((device) =>
+      this.normalizeDevice({
+        ...device
+      })
+    )
     this.activeDeviceId = snapshot.activeDeviceId
 
     this.nativeRemoteService.on('unpaired', (message) => {
       const activeDevice = this.getActiveDevice()
+
+      if (activeDevice) {
+        this.updateBackendHealth(activeDevice.id, 'native', {
+          available: canUseNative(activeDevice),
+          ready: false,
+          lastState: 'error',
+          lastError: message
+        })
+      }
 
       this.activeBackend = null
       this.updateConnectionState({
@@ -139,14 +163,207 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
   getCapabilities() {
     const activeDevice = this.getActiveDevice()
-    const adbFallback = Boolean(activeDevice && canUseAdb(activeDevice))
+    const adbEnabled = Boolean(activeDevice && canUseAdb(activeDevice))
 
     return {
       nativeRemote: Boolean(activeDevice && canUseNative(activeDevice)),
-      adbFallback,
-      typing: this.activeBackend === 'adb' || adbFallback,
-      apps: this.activeBackend === 'adb' || adbFallback
+      adbFallback: adbEnabled,
+      typing: this.activeBackend === 'adb' || adbEnabled,
+      apps: this.activeBackend === 'adb' || adbEnabled
     }
+  }
+
+  async getHealth(adbAvailable: boolean): Promise<DeviceHealthStatus | null> {
+    const activeDevice = this.getActiveDevice()
+
+    if (!activeDevice) {
+      return null
+    }
+
+    const pendingNativePairing = this.getPendingNativePairing()
+    const adbSnapshot = this.resolveAdbHealth(activeDevice, adbAvailable)
+    const nativeSnapshot = this.resolveNativeHealth(activeDevice)
+    const issues: HealthIssue[] = []
+
+    if (!adbAvailable) {
+      issues.push({
+        code: 'adb_missing',
+        severity: 'danger',
+        summary: 'ADB is not available on this computer.',
+        detail: 'Install Android platform-tools so this app can connect reliably and power typing plus installed apps.',
+        backend: 'system'
+      })
+    } else if (!canUseAdb(activeDevice)) {
+      issues.push({
+        code: 'adb_disabled_for_tv',
+        severity: 'warning',
+        summary: 'ADB is turned off for this TV profile.',
+        detail: 'Enable ADB for this TV to unlock typing, installed apps, and the most reliable connection path.',
+        backend: 'adb'
+      })
+    } else if (this.connectionState.status === 'unauthorized' && this.connectionState.backend === 'adb') {
+      issues.push({
+        code: 'adb_unauthorized',
+        severity: 'warning',
+        summary: 'ADB needs authorization on the TV.',
+        detail: 'Accept the wireless debugging prompt on the TV, then retry the ADB connection.',
+        backend: 'adb'
+      })
+    } else if (activeDevice.mode === 'pair' && !adbSnapshot.ready && !activeDevice.backendHealth?.adb.lastConnectedAt) {
+      issues.push({
+        code: 'adb_pair_required',
+        severity: 'warning',
+        summary: 'ADB pairing still needs to be completed for this TV.',
+        detail: 'Use the pairing code from the TV before trying to use ADB-backed features.',
+        backend: 'adb'
+      })
+    } else if (adbSnapshot.lastError && this.connectionState.status !== 'connected') {
+      issues.push({
+        code: 'adb_connect_failed',
+        severity: 'danger',
+        summary: 'ADB is enabled but not ready yet.',
+        detail: adbSnapshot.lastError,
+        backend: 'adb'
+      })
+    }
+
+    if (pendingNativePairing && pendingNativePairing.deviceId === activeDevice.id) {
+      issues.push({
+        code: 'native_pairing_stalled',
+        severity: 'warning',
+        summary: 'Native remote is waiting for a TV code.',
+        detail: 'If the TV never shows the code prompt, stop here and switch back to ADB.',
+        backend: 'native'
+      })
+    }
+
+    if (issues.length === 0) {
+      issues.push({
+        code: 'ready',
+        severity: 'positive',
+        summary: 'This TV is ready to use.',
+        detail:
+          this.connectionState.status === 'connected'
+            ? `Connected over ${this.activeBackend === 'native' ? 'Native Remote' : 'ADB'}.`
+            : 'ADB is configured and the setup state looks healthy.'
+      })
+    }
+
+    const recommendedActions = this.buildRecommendedActions(activeDevice, issues)
+    const primaryIssue = issues[0]
+
+    return {
+      deviceId: activeDevice.id,
+      summary: primaryIssue.summary,
+      detail: primaryIssue.detail,
+      issues,
+      adb: adbSnapshot,
+      native: nativeSnapshot,
+      recommendedActions
+    }
+  }
+
+  async runAdbTroubleshooting(adbAvailable: boolean): Promise<DeviceHealthStatus | null> {
+    const activeDevice = this.getActiveDevice()
+
+    if (!activeDevice) {
+      return null
+    }
+
+    if (!adbAvailable) {
+      this.updateBackendHealth(activeDevice.id, 'adb', {
+        available: false,
+        ready: false,
+        lastState: 'missing',
+        lastError: 'ADB was not detected on this computer.'
+      })
+      return this.getHealth(adbAvailable)
+    }
+
+    if (!canUseAdb(activeDevice)) {
+      this.updateBackendHealth(activeDevice.id, 'adb', {
+        available: false,
+        ready: false,
+        lastState: 'disabled',
+        lastError: 'ADB is disabled for this TV profile.'
+      })
+      return this.getHealth(adbAvailable)
+    }
+
+    if (this.getPendingNativePairing()?.deviceId === activeDevice.id) {
+      this.updateBackendHealth(activeDevice.id, 'native', {
+        available: canUseNative(activeDevice),
+        ready: false,
+        lastState: 'pairing',
+        lastError: 'Native pairing is still waiting for a code from the TV.'
+      })
+      return this.getHealth(adbAvailable)
+    }
+
+    try {
+      const devices = await this.adbClient.listDevices()
+      const liveState = deriveConnectionState(devices, buildSerial(activeDevice), activeDevice.id)
+
+      if (liveState.status === 'connected') {
+        this.updateBackendHealth(activeDevice.id, 'adb', {
+          available: true,
+          ready: true,
+          lastState: 'ready',
+          lastError: undefined,
+          lastConnectedAt: new Date().toISOString()
+        })
+        return this.getHealth(adbAvailable)
+      }
+
+      if (liveState.status === 'unauthorized') {
+        this.updateBackendHealth(activeDevice.id, 'adb', {
+          available: true,
+          ready: false,
+          lastState: 'unauthorized',
+          lastError: liveState.message
+        })
+        return this.getHealth(adbAvailable)
+      }
+
+      if (activeDevice.mode === 'pair' && activeDevice.pairPort) {
+        this.updateBackendHealth(activeDevice.id, 'adb', {
+          available: true,
+          ready: false,
+          lastState: 'pairing',
+          lastError: `Pair ADB with ${activeDevice.host}:${activeDevice.pairPort} before reconnecting.`
+        })
+        return this.getHealth(adbAvailable)
+      }
+
+      await this.adbClient.connect(activeDevice.host, activeDevice.connectPort)
+      const nextState = await this.adbClient.getConnectionState(activeDevice)
+
+      if (nextState.status === 'connected') {
+        this.updateBackendHealth(activeDevice.id, 'adb', {
+          available: true,
+          ready: true,
+          lastState: 'ready',
+          lastError: undefined,
+          lastConnectedAt: new Date().toISOString()
+        })
+      } else {
+        this.updateBackendHealth(activeDevice.id, 'adb', {
+          available: true,
+          ready: false,
+          lastState: nextState.status,
+          lastError: nextState.message ?? 'ADB is still not ready for this TV.'
+        })
+      }
+    } catch (error) {
+      this.updateBackendHealth(activeDevice.id, 'adb', {
+        available: true,
+        ready: false,
+        lastState: 'error',
+        lastError: error instanceof Error ? error.message : 'ADB troubleshooting failed.'
+      })
+    }
+
+    return this.getHealth(adbAvailable)
   }
 
   async discoverNativeDevices(): Promise<DiscoveredNativeDevice[]> {
@@ -229,6 +446,42 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     return updated
   }
 
+  async toggleFavoriteApp(packageName: string): Promise<SavedDevice> {
+    const activeDevice = this.getActiveDevice()
+
+    if (!activeDevice) {
+      throw new Error('Connect to a TV before pinning favorite apps.')
+    }
+
+    const favorites = new Set(activeDevice.favorites ?? [])
+
+    if (favorites.has(packageName)) {
+      favorites.delete(packageName)
+    } else {
+      favorites.add(packageName)
+    }
+
+    return this.replaceDevice(activeDevice.id, {
+      favorites: [...favorites].sort()
+    })
+  }
+
+  async recordAppLaunch(packageName: string): Promise<SavedDevice> {
+    const activeDevice = this.getActiveDevice()
+
+    if (!activeDevice) {
+      throw new Error('Connect to a TV before recording app launches.')
+    }
+
+    const launchedAt = new Date().toISOString()
+    const recentApps = [
+      { packageName, launchedAt },
+      ...(activeDevice.recentApps ?? []).filter((entry) => entry.packageName !== packageName)
+    ].slice(0, RECENT_APPS_LIMIT)
+
+    return this.replaceDevice(activeDevice.id, { recentApps })
+  }
+
   async beginNativePairing(input: BeginNativePairingInput): Promise<ConnectionState> {
     const saved = await this.saveDevice({
       id: input.id,
@@ -248,6 +501,12 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     this.activeDeviceId = saved.id
     this.persist()
+    this.updateBackendHealth(saved.id, 'native', {
+      available: true,
+      ready: false,
+      lastState: 'pairing',
+      lastError: 'Waiting for the TV to show a pairing code.'
+    })
 
     this.updateConnectionState({
       status: 'pairing',
@@ -297,6 +556,13 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       adbEnabled: input.adbEnabled ?? true
     })
 
+    this.updateBackendHealth(saved.id, 'adb', {
+      available: true,
+      ready: false,
+      lastState: 'pairing',
+      lastError: undefined
+    })
+
     return this.connectViaAdb(saved)
   }
 
@@ -305,7 +571,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       ? this.savedDevices.find((device) => device.id === input.id) ?? null
       : null
 
-    const baseDevice = existing
+    const baseDeviceDraft = existing
       ? this.normalizeDevice({
           ...existing,
           ...input,
@@ -322,6 +588,18 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
           nativeRemote: input.nativeRemote,
           adbEnabled: input.adbEnabled
         })
+
+    const baseDevice = await this.saveDevice({
+      id: baseDeviceDraft.id,
+      name: baseDeviceDraft.name,
+      host: baseDeviceDraft.host,
+      connectPort: baseDeviceDraft.connectPort,
+      pairPort: baseDeviceDraft.pairPort,
+      mode: baseDeviceDraft.mode,
+      preferredBackend: baseDeviceDraft.preferredBackend,
+      nativeRemote: baseDeviceDraft.nativeRemote,
+      adbEnabled: baseDeviceDraft.adbEnabled
+    })
 
     this.activeDeviceId = baseDevice.id
     this.persist()
@@ -340,6 +618,12 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
           return result
         } catch (error) {
           nativeError = error instanceof Error ? error : new Error('Native remote connection failed.')
+          this.updateBackendHealth(baseDevice.id, 'native', {
+            available: true,
+            ready: false,
+            lastState: 'error',
+            lastError: nativeError.message
+          })
         }
       }
 
@@ -347,13 +631,19 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         try {
           return await this.connectViaAdb(baseDevice, nativeError)
         } catch (error) {
+          const adbError = error instanceof Error ? error : new Error('ADB connection failed.')
+          this.updateBackendHealth(baseDevice.id, 'adb', {
+            available: true,
+            ready: false,
+            lastState: 'error',
+            lastError: adbError.message
+          })
+
           if (nativeError) {
-            throw new Error(
-              `${nativeError.message} ADB fallback also failed: ${error instanceof Error ? error.message : 'Unknown error.'}`
-            )
+            throw new Error(`${nativeError.message} ADB fallback also failed: ${adbError.message}`)
           }
 
-          throw error
+          throw adbError
         }
       }
     }
@@ -375,6 +665,14 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     if (this.activeBackend === 'adb' && activeDevice) {
       await this.adbClient.disconnect(buildSerial(activeDevice))
+    }
+
+    if (activeDevice && this.activeBackend) {
+      this.updateBackendHealth(activeDevice.id, this.activeBackend, {
+        available: this.activeBackend === 'adb' ? canUseAdb(activeDevice) : canUseNative(activeDevice),
+        ready: false,
+        lastState: 'disconnected'
+      })
     }
 
     this.activeBackend = null
@@ -428,8 +726,21 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     if (this.activeBackend === 'native') {
       if (this.nativeRemoteService.isConnected()) {
+        this.updateBackendHealth(activeDevice.id, 'native', {
+          available: true,
+          ready: true,
+          lastState: 'ready',
+          lastError: undefined
+        })
         return this.connectionState
       }
+
+      this.updateBackendHealth(activeDevice.id, 'native', {
+        available: true,
+        ready: false,
+        lastState: 'error',
+        lastError: `Native remote session dropped for ${activeDevice.name}.`
+      })
 
       this.updateConnectionState({
         status: 'error',
@@ -446,6 +757,13 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         const liveState = await this.adbClient.getConnectionState(activeDevice)
 
         if (liveState.status === 'connected') {
+          this.updateBackendHealth(activeDevice.id, 'adb', {
+            available: true,
+            ready: true,
+            lastState: 'ready',
+            lastError: undefined
+          })
+
           if (this.connectionState.status !== 'connected') {
             this.updateConnectionState({
               status: 'connected',
@@ -458,12 +776,24 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
           return this.connectionState
         }
 
+        this.updateBackendHealth(activeDevice.id, 'adb', {
+          available: true,
+          ready: false,
+          lastState: liveState.status,
+          lastError: liveState.message
+        })
         this.updateConnectionState({
           ...liveState,
           backend: 'adb'
         })
         return this.attemptReconnect()
       } catch (error) {
+        this.updateBackendHealth(activeDevice.id, 'adb', {
+          available: true,
+          ready: false,
+          lastState: 'error',
+          lastError: error instanceof Error ? error.message : 'Unable to refresh ADB state.'
+        })
         this.updateConnectionState({
           status: 'error',
           backend: 'adb',
@@ -492,8 +822,21 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     const state = await this.adbClient.getConnectionState(activeDevice)
 
     if (state.status !== 'connected') {
+      this.updateBackendHealth(activeDevice.id, 'adb', {
+        available: true,
+        ready: false,
+        lastState: state.status,
+        lastError: state.message ?? 'ADB fallback is not ready for this TV yet.'
+      })
       throw new Error('ADB fallback is not ready for this TV yet. Pair or reconnect ADB in Setup first.')
     }
+
+    this.updateBackendHealth(activeDevice.id, 'adb', {
+      available: true,
+      ready: true,
+      lastState: 'ready',
+      lastError: undefined
+    })
 
     return callback(buildSerial(activeDevice))
   }
@@ -505,11 +848,23 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       deviceId: device.id,
       message: `Connecting to ${device.name} via native remote...`
     })
+    this.updateBackendHealth(device.id, 'native', {
+      available: true,
+      ready: false,
+      lastState: 'connecting',
+      lastError: undefined
+    })
 
     const result = await this.nativeRemoteService.connect(device)
 
     if (result.status === 'pairing') {
       this.activeBackend = null
+      this.updateBackendHealth(device.id, 'native', {
+        available: true,
+        ready: false,
+        lastState: 'pairing',
+        lastError: 'Waiting for the TV to show and accept a pairing code.'
+      })
       this.updateConnectionState({
         status: 'pairing',
         backend: 'native',
@@ -533,11 +888,23 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         ? `${nativeError.message} Falling back to ADB...`
         : `Connecting to ${device.name} via ADB...`
     })
+    this.updateBackendHealth(device.id, 'adb', {
+      available: true,
+      ready: false,
+      lastState: 'connecting',
+      lastError: undefined
+    })
 
     await this.adbClient.connect(device.host, device.connectPort)
     const nextState = await this.adbClient.getConnectionState(device)
 
     if (nextState.status !== 'connected') {
+      this.updateBackendHealth(device.id, 'adb', {
+        available: true,
+        ready: false,
+        lastState: nextState.status,
+        lastError: nextState.message
+      })
       this.updateConnectionState({
         ...nextState,
         backend: 'adb'
@@ -545,6 +912,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       return this.connectionState
     }
 
+    const now = new Date().toISOString()
     const saved = await this.saveDevice({
       id: device.id,
       name: device.name,
@@ -557,8 +925,30 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       adbEnabled: device.adbEnabled
     })
 
-    saved.lastConnectedAt = new Date().toISOString()
+    saved.lastConnectedAt = now
     saved.lastConnectedBackend = 'adb'
+    saved.backendHealth = {
+      ...saved.backendHealth,
+      adb: createBackendHealthSnapshot({
+        ...saved.backendHealth?.adb,
+        available: true,
+        ready: true,
+        lastCheckedAt: now,
+        lastConnectedAt: now,
+        lastError: undefined,
+        lastState: 'ready'
+      }),
+      native: createBackendHealthSnapshot({
+        ...saved.backendHealth?.native,
+        available: canUseNative(saved),
+        ready: false,
+        lastCheckedAt: now,
+        lastState: saved.backendHealth?.native.lastState ?? 'disconnected',
+        lastConnectedAt: saved.backendHealth?.native.lastConnectedAt,
+        lastError: saved.backendHealth?.native.lastError
+      })
+    }
+
     this.savedDevices = this.savedDevices.map((item) => (item.id === saved.id ? saved : item))
     this.activeDeviceId = saved.id
     this.activeBackend = 'adb'
@@ -579,6 +969,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     device: SavedDevice,
     certificate?: { key: string; cert: string }
   ): Promise<ConnectionState> {
+    const now = new Date().toISOString()
     const saved = await this.saveDevice({
       id: device.id,
       name: device.name,
@@ -591,8 +982,30 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       nativeRemote: this.mergeNativeRemote(device.nativeRemote, certificate)
     })
 
-    saved.lastConnectedAt = new Date().toISOString()
+    saved.lastConnectedAt = now
     saved.lastConnectedBackend = 'native'
+    saved.backendHealth = {
+      ...saved.backendHealth,
+      adb: createBackendHealthSnapshot({
+        ...saved.backendHealth?.adb,
+        available: canUseAdb(saved),
+        ready: saved.backendHealth?.adb.ready ?? false,
+        lastCheckedAt: now,
+        lastConnectedAt: saved.backendHealth?.adb.lastConnectedAt,
+        lastState: saved.backendHealth?.adb.lastState,
+        lastError: saved.backendHealth?.adb.lastError
+      }),
+      native: createBackendHealthSnapshot({
+        ...saved.backendHealth?.native,
+        available: true,
+        ready: true,
+        lastCheckedAt: now,
+        lastConnectedAt: now,
+        lastError: undefined,
+        lastState: 'ready'
+      })
+    }
+
     this.savedDevices = this.savedDevices.map((item) => (item.id === saved.id ? saved : item))
     this.activeDeviceId = saved.id
     this.activeBackend = 'native'
@@ -607,6 +1020,89 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     })
 
     return this.connectionState
+  }
+
+  private buildRecommendedActions(device: SavedDevice, issues: HealthIssue[]): RecommendedAction[] {
+    const actions: RecommendedAction[] = []
+    const primaryIssue = issues[0]
+
+    switch (primaryIssue?.code) {
+      case 'adb_pair_required':
+        actions.push('pair_adb')
+        break
+      case 'adb_unauthorized':
+      case 'adb_connect_failed':
+        actions.push('connect_adb')
+        break
+      case 'native_pairing_stalled':
+        actions.push(canUseAdb(device) ? 'switch_to_adb' : 'retry_native')
+        break
+      case 'ready':
+        if (this.connectionState.status === 'connected') {
+          actions.push('open_remote')
+          if (canUseAdb(device)) {
+            actions.push('open_apps')
+          }
+        } else if (canUseAdb(device)) {
+          actions.push(device.mode === 'pair' ? 'pair_adb' : 'connect_adb')
+        }
+        break
+      default:
+        break
+    }
+
+    if (actions.length === 0 && primaryIssue?.code === 'ready' && this.connectionState.status === 'connected') {
+      actions.push('open_remote')
+    }
+
+    return [...new Set(actions)].slice(0, 2)
+  }
+
+  private resolveAdbHealth(device: SavedDevice, adbAvailable: boolean): BackendHealthSnapshot {
+    const saved = createBackendHealthSnapshot(device.backendHealth?.adb)
+
+    if (!adbAvailable) {
+      return createBackendHealthSnapshot({
+        ...saved,
+        available: false,
+        ready: false,
+        lastState: 'missing'
+      })
+    }
+
+    if (!canUseAdb(device)) {
+      return createBackendHealthSnapshot({
+        ...saved,
+        available: false,
+        ready: false,
+        lastState: 'disabled'
+      })
+    }
+
+    return createBackendHealthSnapshot({
+      ...saved,
+      available: true,
+      ready: this.activeBackend === 'adb' ? this.connectionState.status === 'connected' : saved.ready
+    })
+  }
+
+  private resolveNativeHealth(device: SavedDevice): BackendHealthSnapshot {
+    const saved = createBackendHealthSnapshot(device.backendHealth?.native)
+
+    if (!canUseNative(device)) {
+      return createBackendHealthSnapshot({
+        ...saved,
+        available: false,
+        ready: false,
+        lastState: 'not_configured'
+      })
+    }
+
+    return createBackendHealthSnapshot({
+      ...saved,
+      available: true,
+      ready: this.activeBackend === 'native' ? this.connectionState.status === 'connected' : saved.ready
+    })
   }
 
   private mergeNativeRemote(
@@ -628,6 +1124,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       throw new Error('A host or IP address is required.')
     }
 
+    const adbEnabled = input.adbEnabled ?? true
+    const nativeRemote = input.nativeRemote
+
     return {
       id: input.id ?? randomUUID(),
       name: input.name.trim(),
@@ -635,13 +1134,73 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       connectPort: input.connectPort ?? 5555,
       pairPort: input.pairPort,
       mode: input.mode ?? 'connect',
-      preferredBackend: input.preferredBackend ?? (input.nativeRemote ? 'auto' : 'adb'),
-      adbEnabled: input.adbEnabled ?? true,
-      nativeRemote: input.nativeRemote,
+      preferredBackend: input.preferredBackend ?? (nativeRemote ? 'auto' : 'adb'),
+      adbEnabled,
+      nativeRemote,
       lastConnectedAt: input.lastConnectedAt,
       lastConnectedBackend: input.lastConnectedBackend,
-      cachedApps: input.cachedApps
+      cachedApps: input.cachedApps,
+      favorites: [...new Set(input.favorites ?? [])],
+      recentApps: (input.recentApps ?? []).slice(0, RECENT_APPS_LIMIT),
+      backendHealth: {
+        adb: createBackendHealthSnapshot({
+          ...input.backendHealth?.adb,
+          available: adbEnabled
+        }),
+        native: createBackendHealthSnapshot({
+          ...input.backendHealth?.native,
+          available: Boolean(nativeRemote)
+        })
+      }
     }
+  }
+
+  private replaceDevice(deviceId: string, patch: Partial<SavedDevice>): SavedDevice {
+    const existing = this.savedDevices.find((item) => item.id === deviceId)
+
+    if (!existing) {
+      throw new Error('That TV profile no longer exists.')
+    }
+
+    const updated = this.normalizeDevice({
+      ...existing,
+      ...patch
+    })
+
+    this.savedDevices = this.savedDevices.map((item) => (item.id === deviceId ? updated : item))
+    this.persist()
+    this.emitDevicesChanged()
+    return updated
+  }
+
+  private updateBackendHealth(
+    deviceId: string,
+    backend: ConnectionBackend,
+    patch: Partial<BackendHealthSnapshot>
+  ): SavedDevice | null {
+    const existing = this.savedDevices.find((item) => item.id === deviceId)
+
+    if (!existing) {
+      return null
+    }
+
+    const currentSnapshot =
+      backend === 'adb'
+        ? createBackendHealthSnapshot(existing.backendHealth?.adb)
+        : createBackendHealthSnapshot(existing.backendHealth?.native)
+    const nextSnapshot = createBackendHealthSnapshot({
+      ...currentSnapshot,
+      ...patch,
+      lastCheckedAt: patch.lastCheckedAt ?? new Date().toISOString()
+    })
+
+    return this.replaceDevice(deviceId, {
+      backendHealth: {
+        adb: backend === 'adb' ? nextSnapshot : createBackendHealthSnapshot(existing.backendHealth?.adb),
+        native:
+          backend === 'native' ? nextSnapshot : createBackendHealthSnapshot(existing.backendHealth?.native)
+      }
+    })
   }
 
   private updateConnectionState(nextState: ConnectionState): void {

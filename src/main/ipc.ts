@@ -11,6 +11,7 @@ import type {
   SendTextInput
 } from '@shared/types'
 import type { AppController } from './services/appController'
+import type { ActionController } from './services/actionController'
 import type { DeviceManager } from './services/deviceManager'
 import type { RemoteController } from './services/remoteController'
 import type { AdbLocator } from './services/adb/adbLocator'
@@ -20,13 +21,22 @@ interface RegisterIpcOptions {
   deviceManager: DeviceManager
   remoteController: RemoteController
   appController: AppController
+  actionController: ActionController
   adbLocator: AdbLocator
   adbClient: AdbClient
   getMainWindow: () => BrowserWindow | null
 }
 
 export function registerIpc(options: RegisterIpcOptions): void {
-  const { deviceManager, remoteController, appController, adbLocator, adbClient, getMainWindow } = options
+  const {
+    deviceManager,
+    remoteController,
+    appController,
+    actionController,
+    adbLocator,
+    adbClient,
+    getMainWindow
+  } = options
 
   ipcMain.handle(IPC_CHANNELS.devicesList, () => deviceManager.listDevices())
 
@@ -58,9 +68,24 @@ export function registerIpc(options: RegisterIpcOptions): void {
 
   ipcMain.handle(IPC_CHANNELS.appsLaunch, (_event, app: LaunchableApp) => appController.launchApp(app))
 
+  ipcMain.handle(IPC_CHANNELS.appsToggleFavorite, (_event, packageName: string) =>
+    appController.toggleFavorite(packageName)
+  )
+
+  ipcMain.handle(IPC_CHANNELS.appsGetForegroundApp, () => appController.getForegroundApp())
+
+  ipcMain.handle(IPC_CHANNELS.actionsRunQuickAction, (_event, id: string) => actionController.runQuickAction(id))
+
   ipcMain.handle(IPC_CHANNELS.diagnosticsGetStatus, async () => {
     const adbInfo = await adbLocator.locate()
     const version = adbInfo.available ? await adbClient.version() : undefined
+    const health = await deviceManager.getHealth(adbInfo.available)
+    const foregroundApp =
+      adbInfo.available && deviceManager.getConnectionState().status === 'connected'
+        ? await appController.getForegroundApp().catch(() => null)
+        : null
+    const quickActions = actionController.listQuickActions(health, foregroundApp)
+
     return {
       adb: {
         available: adbInfo.available,
@@ -73,8 +98,22 @@ export function registerIpc(options: RegisterIpcOptions): void {
       activeDevice: deviceManager.getActiveDevice(),
       savedDevices: deviceManager.listDevices(),
       pendingNativePairing: deviceManager.getPendingNativePairing(),
-      capabilities: deviceManager.getCapabilities()
+      capabilities: deviceManager.getCapabilities(),
+      health,
+      recommendedActions: health?.recommendedActions ?? [],
+      foregroundApp,
+      quickActions
     }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.diagnosticsGetHealth, async () => {
+    const adbInfo = await adbLocator.locate()
+    return deviceManager.getHealth(adbInfo.available)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.diagnosticsRunAdbTroubleshooting, async () => {
+    const adbInfo = await adbLocator.locate()
+    return deviceManager.runAdbTroubleshooting(adbInfo.available)
   })
 
   deviceManager.on('connectionState', (state) => {

@@ -123,6 +123,44 @@ Create packaged artifacts:
 npm run dist
 ```
 
+Build release packages locally without publishing:
+
+```bash
+npm run release:build
+```
+
+Build only macOS release packages locally:
+
+```bash
+npm run release:build:mac
+```
+
+Build only Windows release packages locally:
+
+```bash
+npm run release:build:win
+```
+
+## Versioning And Releases
+
+This repo now uses a tag-driven GitHub release flow.
+
+- Run the `Version Bump` GitHub Actions workflow to create the next version, commit the updated `package.json`, and push a matching `v*` tag.
+- Pushing a `v*` tag triggers the `Release` workflow automatically.
+- The release workflow validates the app with `typecheck`, `test`, and `build`, then creates macOS and Windows packages and uploads them to the GitHub Release.
+
+Local version helpers are available too:
+
+```bash
+npm run version:patch
+npm run version:minor
+npm run version:major
+```
+
+These use `npm version`, which updates `package.json`, updates `package-lock.json`, creates a git commit, and creates a matching tag.
+
+For the full release checklist and workflow details, see [docs/RELEASING.md](docs/RELEASING.md).
+
 ## Testing
 
 Current tests cover:
@@ -150,4 +188,3 @@ Real-device manual testing is still important for:
 1. Choose a TV.
 2. Connect with ADB first.
 3. Use native remote only if you specifically want it and the TV behaves well with it.
-

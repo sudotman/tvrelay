@@ -61,6 +61,7 @@ button {
   max-width: 1480px;
   margin: 0 auto;
   padding: 1.25rem;
+  position: relative;
 }
 
 .app-sidebar,
@@ -272,7 +273,8 @@ button {
 
 .selected-device-strip,
 .callout,
-.latest-note {
+.latest-note,
+.activity-panel {
   padding: 0.95rem 1rem;
   border-radius: 16px;
   border: 1px solid rgba(220, 207, 190, 0.9);
@@ -280,7 +282,8 @@ button {
 }
 
 .selected-device-strip,
-.latest-note {
+.latest-note,
+.activity-panel {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
@@ -544,9 +547,32 @@ textarea {
   border-color: rgba(220, 207, 190, 0.95);
 }
 
+.remote-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  min-height: 82px;
+}
+
+.remote-button small {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
 .remote-button.accent {
   background: #fff2ec;
   border-color: rgba(188, 99, 63, 0.3);
+}
+
+.remote-button.is-pending {
+  box-shadow: 0 0 0 3px rgba(188, 99, 63, 0.16);
+}
+
+.remote-button.is-cooling-down {
+  background: #faf4ef;
+  border-color: rgba(188, 99, 63, 0.2);
 }
 
 .dpad {
@@ -642,17 +668,31 @@ textarea {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.25rem;
+  gap: 0.8rem;
   width: 100%;
   padding: 1rem;
   text-align: left;
+}
+
+.app-card-busy {
+  border-color: rgba(188, 99, 63, 0.38);
+  background: #fff7f2;
+}
+
+.app-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.85rem;
+  width: 100%;
 }
 
 .app-card-head {
   display: flex;
   align-items: center;
   gap: 0.85rem;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .app-card-copy {
@@ -664,6 +704,7 @@ textarea {
 
 .app-card-copy strong {
   font-size: 1rem;
+  line-height: 1.2;
 }
 
 .app-icon {
@@ -693,6 +734,28 @@ textarea {
   font-size: 0.85rem;
   color: var(--muted);
   word-break: break-all;
+}
+
+.app-card-footer {
+  display: flex;
+  width: 100%;
+}
+
+.app-launch-button {
+  width: 100%;
+  justify-content: center;
+}
+
+.app-pin-button {
+  flex: 0 0 auto;
+  min-width: 74px;
+  padding: 0.6rem 0.8rem;
+}
+
+.app-pin-button.active {
+  background: var(--accent-soft);
+  border-color: rgba(188, 99, 63, 0.3);
+  color: var(--accent-deep);
 }
 
 .pairing-panel {
@@ -807,5 +870,195 @@ button:disabled {
 
   .button-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.action-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.hero-health-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem 1rem;
+}
+
+.quick-action-panel,
+.health-panel,
+.shortcut-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.toast-stack {
+  position: fixed;
+  top: 1.25rem;
+  right: 1.25rem;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  width: min(360px, calc(100vw - 2rem));
+}
+
+.toast-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.95rem 1rem;
+  border-radius: 16px;
+  border: 1px solid rgba(220, 207, 190, 0.9);
+  background: rgba(255, 253, 249, 0.98);
+  box-shadow: var(--shadow);
+}
+
+.toast-card span {
+  color: var(--muted);
+}
+
+.quick-action-grid,
+.shortcut-grid,
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.quick-action-button,
+.shortcut-card,
+.health-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: 0.9rem 1rem;
+  border-radius: 16px;
+  border: 1px solid rgba(220, 207, 190, 0.85);
+  background: rgba(255, 253, 249, 0.88);
+}
+
+.quick-action-button span,
+.shortcut-card span,
+.health-card span,
+.health-summary span {
+  color: var(--muted);
+}
+
+.health-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.issue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.issue-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 14px;
+  border: 1px solid rgba(220, 207, 190, 0.85);
+}
+
+.issue-positive {
+  background: rgba(45, 101, 76, 0.08);
+}
+
+.issue-warning {
+  background: rgba(147, 97, 46, 0.08);
+}
+
+.issue-danger {
+  background: rgba(148, 59, 59, 0.08);
+}
+
+.issue-neutral {
+  background: rgba(31, 36, 48, 0.05);
+}
+
+.compact-header {
+  align-items: center;
+}
+
+.compact-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.app-section-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin-top: 1rem;
+}
+
+.app-card-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: stretch;
+}
+
+.activity-panel {
+  gap: 0.85rem;
+}
+
+.activity-panel h3 {
+  margin: 0;
+}
+
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.activity-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 14px;
+  border: 1px solid rgba(220, 207, 190, 0.85);
+  background: rgba(255, 253, 249, 0.72);
+}
+
+.activity-item span {
+  color: var(--muted);
+}
+
+.app-favorite-button {
+  min-width: 76px;
+}
+
+.app-favorite-button.active {
+  background: var(--accent-soft);
+  border-color: rgba(188, 99, 63, 0.35);
+}
+
+.warning-copy {
+  color: var(--warn);
+}
+
+@media (max-width: 1180px) {
+  .hero-health-grid,
+  .quick-action-grid,
+  .shortcut-grid,
+  .health-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .toast-stack {
+    left: 1rem;
+    right: 1rem;
+    width: auto;
   }
 }

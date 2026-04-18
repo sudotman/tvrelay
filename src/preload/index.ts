@@ -16,7 +16,12 @@ const api: TvRemoteApi = {
   sendText: (input) => ipcRenderer.invoke(IPC_CHANNELS.remoteSendText, input),
   listApps: (forceRefresh) => ipcRenderer.invoke(IPC_CHANNELS.appsList, forceRefresh),
   launchApp: (app) => ipcRenderer.invoke(IPC_CHANNELS.appsLaunch, app),
+  toggleFavoriteApp: (packageName) => ipcRenderer.invoke(IPC_CHANNELS.appsToggleFavorite, packageName),
   getDiagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.diagnosticsGetStatus),
+  getHealth: () => ipcRenderer.invoke(IPC_CHANNELS.diagnosticsGetHealth),
+  runAdbTroubleshooting: () => ipcRenderer.invoke(IPC_CHANNELS.diagnosticsRunAdbTroubleshooting),
+  getForegroundApp: () => ipcRenderer.invoke(IPC_CHANNELS.appsGetForegroundApp),
+  runQuickAction: (id) => ipcRenderer.invoke(IPC_CHANNELS.actionsRunQuickAction, id),
   onConnectionStateChanged: (listener) => {
     const wrapped = (_event: Electron.IpcRendererEvent, state: ConnectionState) => listener(state)
     ipcRenderer.on(IPC_CHANNELS.connectionStateChanged, wrapped)

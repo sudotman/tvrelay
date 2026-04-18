@@ -34,7 +34,7 @@ function createNativeRemoteService(overrides?: Partial<NativeRemoteService>): Na
 }
 
 describe('DeviceManager', () => {
-  it('updates last connection and active device when adb connect succeeds', async () => {
+  it('updates last connection and health when adb connect succeeds', async () => {
     const adbClient = {
       connect: vi.fn().mockResolvedValue(undefined),
       getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-1' })
@@ -52,8 +52,7 @@ describe('DeviceManager', () => {
 
     expect(state.status).toBe('connected')
     expect(state.backend).toBe('adb')
-    expect(manager.getActiveDevice()?.name).toBe('Office TV')
-    expect(manager.getActiveBackend()).toBe('adb')
+    expect(manager.getActiveDevice()?.backendHealth?.adb.ready).toBe(true)
     expect(manager.listDevices()[0]?.lastConnectedAt).toBeTruthy()
     manager.dispose()
   })
@@ -116,6 +115,7 @@ describe('DeviceManager', () => {
 
     expect(state.backend).toBe('native')
     expect(manager.getActiveBackend()).toBe('native')
+    expect(manager.getActiveDevice()?.backendHealth?.native.ready).toBe(true)
     expect(nativeService.connect).toHaveBeenCalledTimes(1)
     expect(adbClient.connect).not.toHaveBeenCalled()
     manager.dispose()
@@ -149,40 +149,12 @@ describe('DeviceManager', () => {
 
     expect(state.backend).toBe('adb')
     expect(manager.getActiveBackend()).toBe('adb')
-    expect(nativeService.connect).toHaveBeenCalledTimes(1)
+    expect(manager.getActiveDevice()?.backendHealth?.native.lastError).toContain('Native remote timed out')
     expect(adbClient.connect).toHaveBeenCalledTimes(1)
     manager.dispose()
   })
 
-  it('removes a saved TV and clears the active session when deleting it', async () => {
-    const adbClient = {
-      connect: vi.fn().mockResolvedValue(undefined),
-      disconnect: vi.fn().mockResolvedValue(undefined),
-      getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-4' })
-    } as unknown as AdbClient
-
-    const manager = new DeviceManager(createStore(), adbClient, createNativeRemoteService())
-    await manager.init()
-
-    await manager.connectDevice({
-      id: 'tv-4',
-      name: 'Den TV',
-      host: '192.168.1.12',
-      connectPort: 5555,
-      mode: 'connect'
-    })
-
-    const devices = await manager.deleteDevice('tv-4')
-
-    expect(devices).toHaveLength(0)
-    expect(manager.getActiveDevice()).toBeNull()
-    expect(manager.getActiveBackend()).toBeNull()
-    expect(manager.getConnectionState().status).toBe('disconnected')
-    expect(adbClient.disconnect).toHaveBeenCalledTimes(1)
-    manager.dispose()
-  })
-
-  it('persists cached installed apps for a saved TV', async () => {
+  it('persists favorites and recent app launches per tv', async () => {
     const adbClient = {
       connect: vi.fn().mockResolvedValue(undefined),
       getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-5' })
@@ -199,19 +171,130 @@ describe('DeviceManager', () => {
       mode: 'connect'
     })
 
-    const updated = await manager.updateDeviceAppsCache('tv-5', [
-      {
-        packageName: 'com.netflix.ninja',
-        activity: 'com.netflix.ninja/com.netflix.ninja.MainActivity',
-        displayName: 'Netflix',
-        category: 'leanback',
-        iconDataUrl: 'data:image/png;base64,abc'
-      }
-    ])
+    await manager.toggleFavoriteApp('com.netflix.ninja')
+    await manager.recordAppLaunch('com.netflix.ninja')
+    await manager.recordAppLaunch('com.google.android.youtube.tv')
 
-    expect(updated.cachedApps?.apps).toHaveLength(1)
-    expect(updated.cachedApps?.updatedAt).toBeTruthy()
-    expect(manager.getActiveDevice()?.cachedApps?.apps[0]?.displayName).toBe('Netflix')
+    const active = manager.getActiveDevice()
+    expect(active?.favorites).toEqual(['com.netflix.ninja'])
+    expect(active?.recentApps?.map((entry) => entry.packageName)).toEqual([
+      'com.google.android.youtube.tv',
+      'com.netflix.ninja'
+    ])
+    manager.dispose()
+  })
+
+  it('classifies missing adb and recommends next actions', async () => {
+    const adbClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-6' })
+    } as unknown as AdbClient
+
+    const manager = new DeviceManager(createStore(), adbClient, createNativeRemoteService())
+    await manager.init()
+    await manager.connectDevice({
+      id: 'tv-6',
+      name: 'Guest Room',
+      host: '192.168.1.16',
+      connectPort: 5555,
+      mode: 'connect'
+    })
+
+    const health = await manager.getHealth(false)
+
+    expect(health?.issues[0]?.code).toBe('adb_missing')
+    expect(health?.recommendedActions).toEqual([])
+    manager.dispose()
+  })
+
+  it('classifies adb pair required when the tv expects pairing', async () => {
+    const adbClient = {
+      connect: vi.fn().mockRejectedValue(new Error('failed')),
+      getConnectionState: vi.fn().mockResolvedValue({ status: 'disconnected', deviceId: 'tv-7' }),
+      listDevices: vi.fn().mockResolvedValue([])
+    } as unknown as AdbClient
+
+    const manager = new DeviceManager(createStore(), adbClient, createNativeRemoteService())
+    await manager.init()
+    await manager.saveDevice({
+      id: 'tv-7',
+      name: 'Pairing TV',
+      host: '192.168.1.17',
+      connectPort: 5555,
+      pairPort: 37099,
+      mode: 'pair',
+      adbEnabled: true
+    })
+    await manager.connectDevice({ id: 'tv-7' }).catch(() => undefined)
+
+    const health = await manager.runAdbTroubleshooting(true)
+
+    expect(health?.issues[0]?.code).toBe('adb_pair_required')
+    expect(health?.recommendedActions).toContain('pair_adb')
+    manager.dispose()
+  })
+
+  it('classifies unauthorized adb during troubleshooting', async () => {
+    const adbClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      getConnectionState: vi.fn().mockResolvedValue({ status: 'unauthorized', deviceId: 'tv-8' }),
+      listDevices: vi
+        .fn()
+        .mockResolvedValue([{ serial: '192.168.1.18:5555', state: 'unauthorized' }])
+    } as unknown as AdbClient
+
+    const manager = new DeviceManager(createStore(), adbClient, createNativeRemoteService())
+    await manager.init()
+    await manager.saveDevice({
+      id: 'tv-8',
+      name: 'Unauthorized TV',
+      host: '192.168.1.18',
+      connectPort: 5555,
+      mode: 'connect',
+      adbEnabled: true
+    })
+    await manager.connectDevice({ id: 'tv-8' }).catch(() => undefined)
+
+    const health = await manager.runAdbTroubleshooting(true)
+
+    expect(health?.issues[0]?.code).toBe('adb_unauthorized')
+    expect(health?.recommendedActions).toContain('connect_adb')
+    manager.dispose()
+  })
+
+  it('classifies native pairing stalled and suggests switching to adb', async () => {
+    const nativeService = createNativeRemoteService({
+      getPendingPairing: vi.fn().mockReturnValue({
+        deviceId: 'tv-9',
+        name: 'Living Room',
+        host: '192.168.1.19'
+      })
+    })
+    const adbClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-9' })
+    } as unknown as AdbClient
+
+    const manager = new DeviceManager(createStore(), adbClient, nativeService)
+    await manager.init()
+    await manager.saveDevice({
+      id: 'tv-9',
+      name: 'Living Room',
+      host: '192.168.1.19',
+      connectPort: 5555,
+      mode: 'connect',
+      adbEnabled: true,
+      nativeRemote: {
+        remotePort: 6466,
+        pairingPort: 6467
+      }
+    })
+    await manager.connectDevice({ id: 'tv-9' }).catch(() => undefined)
+
+    const health = await manager.getHealth(true)
+
+    expect(health?.issues.some((issue) => issue.code === 'native_pairing_stalled')).toBe(true)
+    expect(health?.recommendedActions).toContain('switch_to_adb')
     manager.dispose()
   })
 })

@@ -74,6 +74,14 @@ npm run build
 
 At minimum, `typecheck` and `build` should pass for UI or service changes.
 
+## Release Workflow
+
+- Prefer the GitHub Actions release flow over manual one-off packaging.
+- Use the `Version Bump` workflow or `npm version` to change app versions so `package.json`, `package-lock.json`, commit history, and tags stay aligned.
+- Treat `v*` git tags as release triggers.
+- Keep release docs in `README.md` and `docs/RELEASING.md` accurate when the workflow changes.
+- If release packaging or version scripts change, make sure the markdown explains the new path clearly.
+
 ## When Adding Features
 
 - Ask whether the feature belongs to ADB, native remote, or both.

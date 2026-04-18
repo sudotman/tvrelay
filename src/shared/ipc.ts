@@ -1,12 +1,16 @@
 import type {
+  ActionFeedback,
   BeginNativePairingInput,
   CompleteNativePairingInput,
   ConnectDeviceInput,
   ConnectionState,
   DiagnosticsStatus,
+  DeviceHealthStatus,
   DiscoveredNativeDevice,
+  ForegroundApp,
   LaunchableApp,
   PairDeviceInput,
+  QuickAction,
   RemoteCommand,
   SaveDeviceInput,
   SavedDevice,
@@ -23,11 +27,16 @@ export interface TvRemoteApi {
   discoverNativeDevices: () => Promise<DiscoveredNativeDevice[]>
   connectDevice: (input: ConnectDeviceInput) => Promise<ConnectionState>
   disconnectDevice: () => Promise<ConnectionState>
-  sendRemoteCommand: (command: RemoteCommand) => Promise<void>
-  sendText: (input: SendTextInput) => Promise<void>
+  sendRemoteCommand: (command: RemoteCommand) => Promise<ActionFeedback>
+  sendText: (input: SendTextInput) => Promise<ActionFeedback>
   listApps: (forceRefresh?: boolean) => Promise<LaunchableApp[]>
-  launchApp: (app: LaunchableApp) => Promise<void>
+  launchApp: (app: LaunchableApp) => Promise<ActionFeedback>
+  toggleFavoriteApp: (packageName: string) => Promise<SavedDevice>
   getDiagnostics: () => Promise<DiagnosticsStatus>
+  getHealth: () => Promise<DeviceHealthStatus | null>
+  runAdbTroubleshooting: () => Promise<DeviceHealthStatus | null>
+  getForegroundApp: () => Promise<ForegroundApp | null>
+  runQuickAction: (id: string) => Promise<ActionFeedback>
   onConnectionStateChanged: (listener: (state: ConnectionState) => void) => () => void
   onDevicesChanged: (listener: (devices: SavedDevice[]) => void) => () => void
 }
@@ -46,7 +55,12 @@ export const IPC_CHANNELS = {
   remoteSendText: 'remote.sendText',
   appsList: 'apps.list',
   appsLaunch: 'apps.launch',
+  appsToggleFavorite: 'apps.toggleFavorite',
   diagnosticsGetStatus: 'diagnostics.getStatus',
+  diagnosticsGetHealth: 'diagnostics.getHealth',
+  diagnosticsRunAdbTroubleshooting: 'diagnostics.runAdbTroubleshooting',
+  appsGetForegroundApp: 'apps.getForegroundApp',
+  actionsRunQuickAction: 'actions.runQuickAction',
   connectionStateChanged: 'events.connectionStateChanged',
   devicesChanged: 'events.devicesChanged'
 } as const

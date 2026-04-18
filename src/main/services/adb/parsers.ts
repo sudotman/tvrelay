@@ -1,4 +1,4 @@
-import type { ConnectionState, LaunchableApp, SavedDevice } from '@shared/types'
+import type { ConnectionState, ForegroundApp, LaunchableApp, SavedDevice } from '@shared/types'
 
 const APP_TITLE_ALIASES: Record<string, string> = {
   'com.apple.atve.androidtv.appletv': 'Apple TV',
@@ -113,6 +113,42 @@ export function parseLaunchableApps(output: string, category: 'leanback' | 'laun
       } satisfies LaunchableApp
     })
     .filter((item): item is LaunchableApp => item !== null)
+}
+
+export function parseForegroundApp(output: string): ForegroundApp | null {
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  const candidates = [
+    /u\d+\s+([A-Za-z0-9._$]+)\/([A-Za-z0-9._$]+)/,
+    /mCurrentFocus=Window\{[^}]+\s+u\d+\s+([A-Za-z0-9._$]+)\/([A-Za-z0-9._$]+)/,
+    /topResumedActivity=.*? ([A-Za-z0-9._$]+)\/([A-Za-z0-9._$]+)/
+  ]
+
+  for (const line of lines) {
+    for (const pattern of candidates) {
+      const match = line.match(pattern)
+
+      if (!match) {
+        continue
+      }
+
+      const [, packageName, activityPart] = match
+      const activity = activityPart.startsWith('.')
+        ? `${packageName}${activityPart}`
+        : activityPart
+
+      return {
+        packageName,
+        activity,
+        displayName: humanizePackage(packageName)
+      }
+    }
+  }
+
+  return null
 }
 
 export function escapeAdbText(text: string): string {

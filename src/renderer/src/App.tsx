@@ -1,14 +1,24 @@
 import { useDeferredValue, useEffect, useState } from 'react'
 import type {
+  ActionFeedback,
   ConnectionBackend,
   ConnectionState,
   DiagnosticsStatus,
   DiscoveredNativeDevice,
   LaunchableApp,
   PreferredConnectionBackend,
+  RecommendedAction,
   RemoteCommand,
   SavedDevice
 } from '@shared/types'
+import {
+  getQuickActionLabel,
+  getRecommendedActionMeta,
+  groupApps,
+  keyBindings,
+  shortcutLegend,
+  shouldHandleRemoteKey
+} from './viewModel'
 
 type TabId = 'setup' | 'remote' | 'apps'
 
@@ -43,17 +53,6 @@ const remoteButtons: Array<{ label: string; command: RemoteCommand; accent?: boo
   { label: 'Sleep', command: 'sleep' }
 ]
 
-const keyBindings: Partial<Record<string, RemoteCommand>> = {
-  ArrowUp: 'up',
-  ArrowDown: 'down',
-  ArrowLeft: 'left',
-  ArrowRight: 'right',
-  Enter: 'select',
-  Backspace: 'back',
-  MediaPlayPause: 'playPause',
-  ' ': 'playPause'
-}
-
 const initialForm: SetupFormState = {
   name: '',
   host: '',
@@ -80,21 +79,21 @@ const viewTabs: Array<{
     label: 'Setup',
     eyebrow: 'Dashboard',
     title: 'Set up one TV and keep the next step obvious.',
-    description: 'Choose a TV, save it, then use the ADB path first. Native remote stays available, but it is clearly optional.'
+    description: 'Choose a TV, use ADB first, and let the health panel tell you what is blocked versus ready.'
   },
   {
     id: 'remote',
     label: 'Remote',
     eyebrow: 'Control',
-    title: 'Directional controls, media keys, and text entry in one place.',
-    description: 'Use the pad for navigation, the buttons for quick actions, and ADB-backed typing when you need to enter text.'
+    title: 'Remote control with a visible keyboard mode.',
+    description: 'Use the pad, the quick actions, or your keyboard without guessing what shortcuts are active.'
   },
   {
     id: 'apps',
     label: 'Apps',
     eyebrow: 'Launch',
-    title: 'Browse installed apps without losing the thread.',
-    description: 'Search what is available on the current TV and launch it directly. This view still depends on ADB fallback.'
+    title: 'Pinned apps, recent launches, and the full installed list.',
+    description: 'Keep daily-use apps close while still browsing everything discovered over ADB.'
   }
 ]
 
@@ -139,6 +138,26 @@ function applyDeviceToForm(device: SavedDevice): SetupFormState {
   }
 }
 
+function formatTimestamp(timestamp?: string): string {
+  if (!timestamp) {
+    return 'Never'
+  }
+
+  return new Date(timestamp).toLocaleString()
+}
+
+function feedbackTone(status: ActionFeedback['status']): 'neutral' | 'positive' | 'danger' | 'warning' {
+  switch (status) {
+    case 'success':
+    case 'sent':
+      return 'positive'
+    case 'blocked':
+      return 'warning'
+    case 'error':
+      return 'danger'
+  }
+}
+
 export function App() {
   const [tab, setTab] = useState<TabId>('setup')
   const [diagnostics, setDiagnostics] = useState<DiagnosticsStatus | null>(null)
@@ -152,53 +171,56 @@ export function App() {
   const [textInput, setTextInput] = useState('')
   const [statusMessage, setStatusMessage] = useState('Ready when you are.')
   const [busy, setBusy] = useState<string | null>(null)
+  const [actionFeed, setActionFeed] = useState<ActionFeedback[]>([])
+  const [actionToasts, setActionToasts] = useState<ActionFeedback[]>([])
+  const [commandCooldowns, setCommandCooldowns] = useState<Partial<Record<RemoteCommand, number>>>({})
+  const [pendingRemoteCommand, setPendingRemoteCommand] = useState<RemoteCommand | null>(null)
+  const [pendingAppPackage, setPendingAppPackage] = useState<string | null>(null)
+  const [pendingQuickActionId, setPendingQuickActionId] = useState<string | null>(null)
+  const [cooldownTick, setCooldownTick] = useState(Date.now())
   const deferredAppsQuery = useDeferredValue(appsQuery)
 
   const activeDevice = diagnostics?.activeDevice ?? null
   const activeAppsCache = activeDevice?.cachedApps ?? null
   const activeBackend = diagnostics?.activeBackend ?? null
   const pendingNativePairing = diagnostics?.pendingNativePairing ?? null
-  const waitingForNativeCode = Boolean(
-    pendingNativePairing ||
-      (connectionState.status === 'pairing' && connectionState.backend === 'native')
-  )
+  const health = diagnostics?.health ?? null
+  const recommendedActions = diagnostics?.recommendedActions ?? []
+  const quickActions = diagnostics?.quickActions ?? []
+  const foregroundApp = diagnostics?.foregroundApp ?? null
   const capabilities = diagnostics?.capabilities ?? {
     nativeRemote: false,
     adbFallback: false,
     typing: false,
     apps: false
   }
+  const waitingForNativeCode = Boolean(
+    pendingNativePairing || (connectionState.status === 'pairing' && connectionState.backend === 'native')
+  )
+  const currentView = viewTabs.find((item) => item.id === tab) ?? viewTabs[0]
   const setupTargetName = form.name.trim() || form.host.trim() || 'your TV'
   const hasSelectedTv = Boolean(form.host.trim())
   const isConnected = connectionState.status === 'connected'
   const activeMatchesForm = Boolean(activeDevice && form.host.trim() && activeDevice.host === form.host.trim())
   const nativePaired = Boolean(activeMatchesForm && activeDevice?.nativeRemote?.certificate)
+  const savedSelectedDevice = devices.find((device) => device.host === form.host.trim()) ?? null
   const selectedHostLabel =
     activeDevice?.host ?? (form.host.trim() !== '' ? form.host.trim() : 'Choose a TV in Setup to begin.')
-  const savedSelectedDevice = devices.find((device) => device.host === form.host.trim()) ?? null
   const preferredPathLabel =
-    form.preferredBackend === 'adb'
-      ? 'ADB'
-      : form.preferredBackend === 'native'
-        ? 'Native Remote'
-        : 'Auto'
+    form.preferredBackend === 'adb' ? 'ADB' : form.preferredBackend === 'native' ? 'Native Remote' : 'Auto'
   const recommendedAdbLabel = form.adbMode === 'pair' ? 'Pair ADB and connect' : 'Connect with ADB'
-  const currentView = viewTabs.find((item) => item.id === tab) ?? viewTabs[0]
   const appsAreLoading = busy === 'apps'
-  const statusTitle = waitingForNativeCode
-    ? 'Finish native pairing or cancel it'
-    : isConnected && activeDevice
-      ? `Connected to ${activeDevice.name}`
-      : connectionState.status === 'connecting'
-        ? 'Connecting to your TV'
-        : connectionState.status === 'error'
-          ? 'Connection needs attention'
-          : 'No TV connected yet'
-  const statusDetail = waitingForNativeCode
-    ? 'If the TV does not show a code within a few seconds, cancel native pairing and use ADB instead.'
-    : isConnected && activeDevice
-      ? `${backendLabel(activeBackend)} is active${activeBackend === 'native' && capabilities.adbFallback ? ', with ADB fallback ready for typing and apps' : '.'}`
-      : 'Use the setup screen below. Start with ADB unless you specifically want to try native remote.'
+  const appSections = groupApps(apps, activeDevice, deferredAppsQuery)
+  const visibleAppCount =
+    appSections.favorites.length + appSections.recents.length + appSections.others.length
+  const latestAction = actionFeed[0] ?? null
+  const heroTitle = waitingForNativeCode
+    ? 'Finish native pairing or switch back to ADB'
+    : health?.summary ??
+      (isConnected && activeDevice ? `Connected to ${activeDevice.name}` : 'No TV connected yet')
+  const heroDetail = waitingForNativeCode
+    ? 'If the TV never shows a pairing code, stop here and use ADB instead.'
+    : health?.detail ?? 'Start with ADB unless you specifically want to try native remote.'
 
   async function refreshDiagnostics(): Promise<void> {
     const next = await window.tvRemoteApi.getDiagnostics()
@@ -233,16 +255,20 @@ export function App() {
       return
     }
 
-    if (activeAppsCache) {
-      return
-    }
-
-    if (appsDeviceId === activeDevice?.id && apps.length > 0) {
+    if (activeAppsCache || (appsDeviceId === activeDevice?.id && apps.length > 0)) {
       return
     }
 
     void loadApps()
-  }, [tab, connectionState.status, capabilities.apps, activeDevice?.id, apps.length, appsDeviceId, activeAppsCache?.updatedAt])
+  }, [
+    activeAppsCache,
+    activeDevice?.id,
+    apps.length,
+    appsDeviceId,
+    capabilities.apps,
+    connectionState.status,
+    tab
+  ])
 
   useEffect(() => {
     if (connectionState.status !== 'connected' || !activeDevice) {
@@ -263,7 +289,7 @@ export function App() {
     }
 
     setAppsDeviceId(activeDevice.id)
-  }, [connectionState.status, activeDevice?.id, activeAppsCache?.updatedAt, appsDeviceId])
+  }, [activeAppsCache, activeDevice, appsDeviceId, connectionState.status])
 
   useEffect(() => {
     if (tab !== 'remote') {
@@ -271,11 +297,8 @@ export function App() {
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLElement) {
-        const tagName = event.target.tagName.toLowerCase()
-        if (tagName === 'input' || tagName === 'textarea') {
-          return
-        }
+      if (!shouldHandleRemoteKey(event.target)) {
+        return
       }
 
       const command = keyBindings[event.key]
@@ -289,22 +312,68 @@ export function App() {
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [tab, connectionState.status])
+  }, [connectionState.status, tab])
 
-  const filteredApps = (() => {
-    const query = deferredAppsQuery.trim().toLowerCase()
+  useEffect(() => {
+    const hasActiveCooldown = Object.values(commandCooldowns).some((value) => (value ?? 0) > Date.now())
 
-    if (!query) {
-      return apps
+    if (!hasActiveCooldown) {
+      return
     }
 
-    return apps.filter((app) => {
-      return (
-        app.displayName.toLowerCase().includes(query) ||
-        app.packageName.toLowerCase().includes(query)
-      )
-    })
-  })()
+    const timer = window.setInterval(() => {
+      setCooldownTick(Date.now())
+    }, 500)
+
+    return () => window.clearInterval(timer)
+  }, [commandCooldowns])
+
+  function createLocalFeedback(input: Omit<ActionFeedback, 'id' | 'createdAt'>): ActionFeedback {
+    return {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      createdAt: new Date().toISOString(),
+      ...input
+    }
+  }
+
+  function publishFeedback(feedback: ActionFeedback): void {
+    setActionFeed((current) => [feedback, ...current].slice(0, 8))
+    setActionToasts((current) => [feedback, ...current].slice(0, 3))
+    setStatusMessage(feedback.detail)
+
+    if (feedback.command && feedback.cooldownMs) {
+      setCommandCooldowns((current) => ({
+        ...current,
+        [feedback.command!]: Date.now() + feedback.cooldownMs!
+      }))
+    }
+
+    window.setTimeout(() => {
+      setActionToasts((current) => current.filter((item) => item.id !== feedback.id))
+    }, feedback.status === 'blocked' ? 3600 : 3000)
+  }
+
+  function publishErrorFeedback(
+    title: string,
+    error: unknown,
+    kind: ActionFeedback['kind'],
+    extras?: Partial<ActionFeedback>
+  ): void {
+    const detail = error instanceof Error ? error.message : title
+    publishFeedback(
+      createLocalFeedback({
+        status: 'error',
+        kind,
+        title,
+        detail,
+        ...extras
+      })
+    )
+  }
+
+  function commandCooldownRemaining(command: RemoteCommand): number {
+    return Math.max(0, (commandCooldowns[command] ?? 0) - cooldownTick)
+  }
 
   async function scanNativeDevices(): Promise<void> {
     setBusy('discover')
@@ -328,7 +397,6 @@ export function App() {
       ...current,
       name: current.name || device.name,
       host: device.host,
-      preferredBackend: current.preferredBackend,
       nativeRemotePort: String(device.remotePort),
       nativePairingPort: String(device.pairingPort)
     }))
@@ -351,9 +419,7 @@ export function App() {
     setBusy('save')
     try {
       setForm((current) =>
-        current.preferredBackend === preferredBackend
-          ? current
-          : { ...current, preferredBackend }
+        current.preferredBackend === preferredBackend ? current : { ...current, preferredBackend }
       )
 
       const saved = await window.tvRemoteApi.saveDevice({
@@ -380,40 +446,33 @@ export function App() {
     }
   }
 
-  async function beginNativePairing(preferredBackendOverride: PreferredConnectionBackend = 'native'): Promise<void> {
+  async function beginNativePairing(
+    preferredBackendOverride: PreferredConnectionBackend = 'native'
+  ): Promise<void> {
     if (!form.host.trim()) {
       setStatusMessage('Choose or enter a TV host before starting native pairing.')
       return
     }
 
-    const preferredBackend = preferredBackendOverride
     setBusy('native-pair')
     try {
-      setForm((current) =>
-        current.preferredBackend === preferredBackend
-          ? current
-          : { ...current, preferredBackend }
-      )
-
       const state = await window.tvRemoteApi.beginNativePairing({
         name: form.name.trim() || form.host.trim(),
         host: form.host.trim(),
         remotePort: Number(form.nativeRemotePort),
         pairingPort: Number(form.nativePairingPort),
         serviceLabel: form.name.trim() || form.host.trim(),
-        preferredBackend,
+        preferredBackend: preferredBackendOverride,
         adbEnabled: form.adbEnabled,
         connectPort: Number(form.connectPort),
         pairPort: form.adbMode === 'pair' ? Number(form.adbPairPort) : undefined,
         mode: form.adbMode
       })
 
+      setForm((current) => ({ ...current, preferredBackend: preferredBackendOverride }))
       setStatusMessage(state.message ?? 'Native pairing started.')
       await refreshDiagnostics()
-
-      if (state.status === 'pairing') {
-        setTab('setup')
-      }
+      setTab(state.status === 'connected' ? 'remote' : 'setup')
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'Could not start native pairing.')
     } finally {
@@ -424,10 +483,7 @@ export function App() {
   async function completeNativePairing(): Promise<void> {
     setBusy('native-confirm')
     try {
-      const state = await window.tvRemoteApi.completeNativePairing({
-        code: form.nativeCode
-      })
-
+      const state = await window.tvRemoteApi.completeNativePairing({ code: form.nativeCode })
       setForm((current) => ({ ...current, nativeCode: '' }))
       setStatusMessage(state.message ?? 'Native remote paired.')
       await refreshDiagnostics()
@@ -451,12 +507,6 @@ export function App() {
     const preferredBackend = preferredBackendOverride ?? form.preferredBackend
     setBusy('connect')
     try {
-      setForm((current) =>
-        current.preferredBackend === preferredBackend
-          ? current
-          : { ...current, preferredBackend }
-      )
-
       const state = await window.tvRemoteApi.connectDevice({
         name: form.name.trim() || form.host.trim(),
         host: form.host.trim(),
@@ -472,13 +522,12 @@ export function App() {
         }
       })
 
+      setForm((current) => ({ ...current, preferredBackend }))
       setStatusMessage(state.message ?? 'Connected.')
       await refreshDiagnostics()
 
       if (state.status === 'connected') {
         setTab('remote')
-      } else if (state.status === 'pairing') {
-        setTab('setup')
       }
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'Connection failed.')
@@ -589,25 +638,32 @@ export function App() {
   }
 
   async function sendRemoteCommand(command: RemoteCommand): Promise<void> {
+    setPendingRemoteCommand(command)
     try {
-      await window.tvRemoteApi.sendRemoteCommand(command)
+      const feedback = await window.tvRemoteApi.sendRemoteCommand(command)
+      publishFeedback(feedback)
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : 'Remote command failed.')
+      publishErrorFeedback('Remote command failed.', error, 'remote', { command })
+    } finally {
+      setPendingRemoteCommand((current) => (current === command ? null : current))
     }
   }
 
   async function sendText(): Promise<void> {
     setBusy('text')
     try {
-      await window.tvRemoteApi.sendText({ text: textInput })
-      setStatusMessage(
-        activeBackend === 'native'
-          ? 'Sent text through ADB fallback.'
-          : 'Sent text to TV.'
-      )
+      const feedback = await window.tvRemoteApi.sendText({ text: textInput })
+      publishFeedback({
+        ...feedback,
+        detail:
+          activeBackend === 'native'
+            ? 'Text was sent through ADB fallback because native remote does not handle typing.'
+            : feedback.detail
+      })
       setTextInput('')
+      await refreshDiagnostics()
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : 'Typing failed.')
+      publishErrorFeedback('Typing failed.', error, 'text')
     } finally {
       setBusy(null)
     }
@@ -628,22 +684,17 @@ export function App() {
       return
     }
 
-    const currentDeviceId = activeDevice?.id ?? null
-
     setBusy('apps')
     try {
       const nextApps = await window.tvRemoteApi.listApps(forceRefresh)
       setApps(nextApps)
-      setAppsDeviceId(currentDeviceId)
+      setAppsDeviceId(activeDevice?.id ?? null)
       setStatusMessage(
         forceRefresh
-          ? activeBackend === 'native'
-            ? `Refreshed ${nextApps.length} apps through ADB fallback.`
-            : `Refreshed ${nextApps.length} apps.`
-          : activeBackend === 'native'
-            ? `Loaded ${nextApps.length} launchable apps through ADB fallback.`
-            : `Loaded ${nextApps.length} launchable apps.`
+          ? `Refreshed ${nextApps.length} apps${activeBackend === 'native' ? ' through ADB fallback' : ''}.`
+          : `Loaded ${nextApps.length} launchable apps${activeBackend === 'native' ? ' through ADB fallback' : ''}.`
       )
+      await refreshDiagnostics()
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'Could not load apps.')
     } finally {
@@ -652,19 +703,143 @@ export function App() {
   }
 
   async function launchApp(app: LaunchableApp): Promise<void> {
-    setBusy(app.packageName)
+    setPendingAppPackage(app.packageName)
     try {
-      await window.tvRemoteApi.launchApp(app)
-      setStatusMessage(
-        activeBackend === 'native'
-          ? `Launching ${app.displayName} through ADB fallback.`
-          : `Launching ${app.displayName}.`
-      )
+      const feedback = await window.tvRemoteApi.launchApp(app)
+      publishFeedback({
+        ...feedback,
+        detail:
+          activeBackend === 'native'
+            ? `${app.displayName} was requested through ADB fallback because native remote cannot launch apps reliably.`
+            : feedback.detail
+      })
+      await refreshDiagnostics()
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : 'Launch failed.')
+      publishErrorFeedback(`Launch failed for ${app.displayName}.`, error, 'app', {
+        appPackage: app.packageName
+      })
+    } finally {
+      setPendingAppPackage((current) => (current === app.packageName ? null : current))
+    }
+  }
+
+  async function toggleFavorite(packageName: string): Promise<void> {
+    setBusy(`favorite-${packageName}`)
+    try {
+      const updated = await window.tvRemoteApi.toggleFavoriteApp(packageName)
+      publishFeedback(
+        createLocalFeedback({
+          status: 'success',
+          kind: 'favorite',
+          title: updated.favorites?.includes(packageName) ? 'Pinned app' : 'Removed app pin',
+          detail: updated.favorites?.includes(packageName)
+            ? 'This app is now pinned near the top for this TV.'
+            : 'This app was removed from the pinned section for this TV.',
+          appPackage: packageName
+        })
+      )
+      await refreshDiagnostics()
+    } catch (error) {
+      publishErrorFeedback('Could not update app pin.', error, 'favorite', { appPackage: packageName })
     } finally {
       setBusy(null)
     }
+  }
+
+  async function runAdbTroubleshooter(): Promise<void> {
+    setBusy('troubleshoot')
+    try {
+      const result = await window.tvRemoteApi.runAdbTroubleshooting()
+      setStatusMessage(result?.summary ?? 'Troubleshooter finished.')
+      await refreshDiagnostics()
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : 'Troubleshooter failed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function runRecommendedAction(action: RecommendedAction): Promise<void> {
+    switch (action) {
+      case 'pair_adb':
+        setTab('setup')
+        setForm((current) => ({ ...current, adbMode: 'pair', preferredBackend: 'adb' }))
+        setStatusMessage('Enter the TV pairing code in Setup, then pair ADB.')
+        break
+      case 'connect_adb':
+        setTab('setup')
+        await connectUsingSetup('adb')
+        break
+      case 'switch_to_adb':
+        setTab('setup')
+        await connectUsingSetup('adb')
+        break
+      case 'retry_native':
+        setTab('setup')
+        await beginNativePairing('native')
+        break
+      case 'open_remote':
+        setTab('remote')
+        break
+      case 'open_apps':
+        setTab('apps')
+        if (!activeAppsCache) {
+          await loadApps()
+        }
+        break
+    }
+  }
+
+  async function runQuickAction(id: string): Promise<void> {
+    setPendingQuickActionId(id)
+    try {
+      const feedback = await window.tvRemoteApi.runQuickAction(id)
+      publishFeedback({
+        ...feedback,
+        kind: 'quick_action',
+        actionId: id
+      })
+      await refreshDiagnostics()
+    } catch (error) {
+      publishErrorFeedback('Quick action failed.', error, 'quick_action', { actionId: id })
+    } finally {
+      setPendingQuickActionId((current) => (current === id ? null : current))
+    }
+  }
+
+  function getAppBadgeLabel(app: LaunchableApp): string {
+    return app.displayName
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() ?? '')
+      .join('')
+      .slice(0, 2)
+  }
+
+  function getAppBadgeTone(packageName: string): string {
+    let hash = 0
+
+    for (const character of packageName) {
+      hash = (hash * 31 + character.charCodeAt(0)) >>> 0
+    }
+
+    return `hsl(${hash % 360} 62% 92%)`
+  }
+
+  function renderRemoteButtonCopy(button: { label: string; command: RemoteCommand; accent?: boolean }) {
+    const remainingMs = commandCooldownRemaining(button.command)
+
+    if (remainingMs <= 0) {
+      return <span>{button.label}</span>
+    }
+
+    return (
+      <>
+        <span>{button.label}</span>
+        <small>{Math.ceil(remainingMs / 1000)}s</small>
+      </>
+    )
   }
 
   function renderNativePairingPanel(className?: string) {
@@ -677,7 +852,7 @@ export function App() {
         <div className="section-header">
           <div>
             <p className="eyebrow">Native Pairing</p>
-            <h2>Enter the code without hunting for it</h2>
+            <h2>Enter the TV code or switch back to ADB</h2>
           </div>
           <span className="section-chip section-chip-muted">Temporary</span>
         </div>
@@ -726,43 +901,117 @@ export function App() {
     )
   }
 
-  function getAppBadgeLabel(app: LaunchableApp): string {
-    return app.displayName
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase() ?? '')
-      .join('')
-      .slice(0, 2)
-  }
-
-  function getAppBadgeTone(packageName: string): string {
-    let hash = 0
-
-    for (const character of packageName) {
-      hash = (hash * 31 + character.charCodeAt(0)) >>> 0
+  function renderRecommendedButtons() {
+    if (recommendedActions.length === 0) {
+      return null
     }
 
-    return `hsl(${hash % 360} 62% 92%)`
+    return (
+      <div className="action-strip">
+        {recommendedActions.map((action) => {
+          const meta = getRecommendedActionMeta(action)
+
+          return (
+            <button
+              key={action}
+              className="primary-button"
+              type="button"
+              onClick={() => void runRecommendedAction(action)}
+              disabled={busy !== null}
+              title={meta.detail}
+            >
+              {meta.label}
+            </button>
+          )
+        })}
+      </div>
+    )
   }
 
-  function formatAppsUpdatedAt(timestamp?: string): string {
-    if (!timestamp) {
-      return 'Never updated'
+  function renderAppSection(title: string, sectionApps: LaunchableApp[]) {
+    if (sectionApps.length === 0) {
+      return null
     }
 
-    return new Date(timestamp).toLocaleString()
+    return (
+      <section className="app-section-block">
+        <div className="section-header compact-header">
+          <h3>{title}</h3>
+          <span>{sectionApps.length}</span>
+        </div>
+        <div className="app-list">
+          {sectionApps.map((app) => {
+            const isFavorite = activeDevice?.favorites?.includes(app.packageName) ?? false
+            const isLaunching = pendingAppPackage === app.packageName
+
+            return (
+              <article
+                key={app.packageName}
+                className={`app-card ${isLaunching ? 'app-card-busy' : ''}`}
+                title={app.packageName}
+              >
+                <div className="app-card-top">
+                  <div className="app-card-head">
+                    {app.iconDataUrl ? (
+                      <img className="app-icon" src={app.iconDataUrl} alt="" aria-hidden="true" />
+                    ) : (
+                      <div
+                        className="app-badge"
+                        style={{ backgroundColor: getAppBadgeTone(app.packageName) }}
+                        aria-hidden="true"
+                      >
+                        {getAppBadgeLabel(app)}
+                      </div>
+                    )}
+                    <div className="app-card-copy">
+                      <strong>{app.displayName}</strong>
+                      <small>{app.category === 'leanback' ? 'TV launcher' : 'Standard launcher'}</small>
+                    </div>
+                  </div>
+                  <button
+                    className={`ghost-button app-pin-button ${isFavorite ? 'active' : ''}`}
+                    type="button"
+                    onClick={() => void toggleFavorite(app.packageName)}
+                    disabled={busy === `favorite-${app.packageName}`}
+                  >
+                    {isFavorite ? 'Pinned' : 'Pin'}
+                  </button>
+                </div>
+                {deferredAppsQuery.trim() ? <span className="app-package">{app.packageName}</span> : null}
+                <div className="app-card-footer">
+                  <button
+                    className="primary-button app-launch-button"
+                    type="button"
+                    onClick={() => void launchApp(app)}
+                    disabled={isLaunching}
+                  >
+                    {isLaunching ? 'Launching…' : 'Launch'}
+                  </button>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      </section>
+    )
   }
 
   return (
     <div className="app-shell">
+      <div className="toast-stack" aria-live="polite">
+        {actionToasts.map((toast) => (
+          <div key={toast.id} className={`toast-card tone-${feedbackTone(toast.status)}`}>
+            <strong>{toast.title}</strong>
+            <span>{toast.detail}</span>
+          </div>
+        ))}
+      </div>
+
       <aside className="app-sidebar">
         <div className="sidebar-brand">
           <p className="eyebrow">Android TV Remote</p>
           <h1>Android TV Remote</h1>
-          <p className="lede">
-            Start with ADB. Keep native remote optional. Make the current TV and next action obvious.
-          </p>
+          <p className="lede">Start with ADB. Keep native optional. Make the current TV and next step obvious.</p>
         </div>
 
         <nav className="view-switcher" aria-label="Views">
@@ -774,7 +1023,13 @@ export function App() {
               onClick={() => setTab(item.id)}
             >
               <strong>{item.label}</strong>
-              <span>{item.id === 'setup' ? 'Choose a TV and connect it' : item.id === 'remote' ? 'Control the connected TV' : 'Browse and launch installed apps'}</span>
+              <span>
+                {item.id === 'setup'
+                  ? 'Choose a TV and resolve what is blocking it'
+                  : item.id === 'remote'
+                    ? 'Control the connected TV and use keyboard mode'
+                    : 'Browse favorites, recents, and installed apps'}
+              </span>
             </button>
           ))}
         </nav>
@@ -785,9 +1040,7 @@ export function App() {
               <p className="eyebrow">Current TV</p>
               <h2>{activeDevice?.name ?? setupTargetName}</h2>
             </div>
-            <div className={`status-pill tone-${statusTone(connectionState.status)}`}>
-              {connectionState.status}
-            </div>
+            <div className={`status-pill tone-${statusTone(connectionState.status)}`}>{connectionState.status}</div>
           </div>
 
           <div className="selected-device-strip sidebar-target">
@@ -798,43 +1051,18 @@ export function App() {
 
           <div className="status-facts sidebar-facts">
             <span>
-              <strong>Backend:</strong>
-              {' '}
-              {isConnected ? backendLabel(activeBackend) : preferredPathLabel}
+              <strong>Backend:</strong> {isConnected ? backendLabel(activeBackend) : preferredPathLabel}
             </span>
             <span>
-              <strong>ADB apps:</strong>
-              {' '}
-              {capabilities.apps ? 'Ready' : 'Needs ADB'}
+              <strong>ADB:</strong> {health?.adb.ready ? 'Ready' : capabilities.adbFallback ? 'Enabled' : 'Needs Setup'}
             </span>
             <span>
-              <strong>Typing:</strong>
-              {' '}
-              {capabilities.typing ? 'Ready' : 'Needs ADB'}
+              <strong>Current app:</strong> {foregroundApp?.displayName ?? 'Unknown'}
             </span>
           </div>
 
           <div className="action-row">
-            {waitingForNativeCode ? (
-              <>
-                <button
-                  className="primary-button"
-                  type="button"
-                  onClick={() => void connectUsingSetup('adb')}
-                  disabled={!hasSelectedTv || !form.adbEnabled || busy === 'connect'}
-                >
-                  Use ADB instead
-                </button>
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={() => void cancelNativePairing()}
-                  disabled={busy === 'disconnect'}
-                >
-                  Cancel pairing
-                </button>
-              </>
-            ) : isConnected ? (
+            {isConnected ? (
               <>
                 <button className="primary-button" type="button" onClick={() => setTab('remote')}>
                   Open remote
@@ -868,9 +1096,27 @@ export function App() {
             )}
           </div>
 
-          <div className="latest-note">
-            <span className="focus-label">Latest note</span>
-            <strong>{statusMessage}</strong>
+          <div className="activity-panel">
+            <div className="section-header compact-header">
+              <div>
+                <span className="focus-label">Action Center</span>
+                <h3>{latestAction?.title ?? 'No recent actions yet'}</h3>
+              </div>
+              {latestAction ? (
+                <div className={`status-pill tone-${feedbackTone(latestAction.status)}`}>{latestAction.status}</div>
+              ) : null}
+            </div>
+            <p className="muted">{latestAction?.detail ?? statusMessage}</p>
+            {actionFeed.length > 0 ? (
+              <div className="activity-list">
+                {actionFeed.slice(0, 5).map((action) => (
+                  <div key={action.id} className={`activity-item tone-${feedbackTone(action.status)}`}>
+                    <strong>{action.title}</strong>
+                    <span>{action.detail}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         </section>
 
@@ -883,30 +1129,58 @@ export function App() {
             <p className="eyebrow">{currentView.eyebrow}</p>
             <h2>{currentView.title}</h2>
             <p className="muted">{currentView.description}</p>
+            <div className="hero-status">
+              <strong>{heroTitle}</strong>
+              <span className="muted">{heroDetail}</span>
+            </div>
+            {renderRecommendedButtons()}
           </div>
 
           <div className="status-strip-side">
-            <div className="hero-status">
-              <strong>{statusTitle}</strong>
-              <span className="muted">{statusDetail}</span>
+            <div className="status-facts hero-facts hero-health-grid">
+              <span>
+                <strong>TV:</strong> {activeDevice?.name ?? setupTargetName}
+              </span>
+              <span>
+                <strong>Host:</strong> {selectedHostLabel}
+              </span>
+              <span>
+                <strong>Path:</strong> {isConnected ? backendLabel(activeBackend) : preferredPathLabel}
+              </span>
+              <span>
+                <strong>ADB last success:</strong> {formatTimestamp(activeDevice?.backendHealth?.adb.lastConnectedAt)}
+              </span>
+              <span>
+                <strong>Native last success:</strong> {formatTimestamp(activeDevice?.backendHealth?.native.lastConnectedAt)}
+              </span>
+              <span>
+                <strong>Foreground app:</strong> {foregroundApp?.displayName ?? 'Unavailable'}
+              </span>
             </div>
-            <div className="status-facts hero-facts">
-              <span>
-                <strong>TV:</strong>
-                {' '}
-                {activeDevice?.name ?? setupTargetName}
-              </span>
-              <span>
-                <strong>Host:</strong>
-                {' '}
-                {selectedHostLabel}
-              </span>
-              <span>
-                <strong>Path:</strong>
-                {' '}
-                {isConnected ? backendLabel(activeBackend) : preferredPathLabel}
-              </span>
-            </div>
+
+            {quickActions.length > 0 ? (
+              <div className="quick-action-panel">
+                <div className="section-header compact-header">
+                  <h3>Quick Actions</h3>
+                  <span>Reliable shortcuts</span>
+                </div>
+                <div className="quick-action-grid">
+                  {quickActions.map((action) => (
+                    <button
+                      key={action.id}
+                      className="ghost-button quick-action-button"
+                      type="button"
+                      onClick={() => void runQuickAction(action.id)}
+                      disabled={action.disabled || pendingQuickActionId === action.id}
+                      title={action.detail}
+                    >
+                      <strong>{getQuickActionLabel(action)}</strong>
+                      <span>{action.detail}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </section>
 
@@ -943,7 +1217,7 @@ export function App() {
                             <span>{device.host}</span>
                             <small>
                               {device.lastConnectedAt
-                                ? `${device.lastConnectedBackend ?? 'unknown'} · ${new Date(device.lastConnectedAt).toLocaleString()}`
+                                ? `${device.lastConnectedBackend ?? 'unknown'} · ${formatTimestamp(device.lastConnectedAt)}`
                                 : 'Not connected yet'}
                             </small>
                           </div>
@@ -977,9 +1251,7 @@ export function App() {
                 <div className="list-block">
                   <p className="list-label">Nearby TVs</p>
                   {discoveredDevices.length === 0 ? (
-                    <p className="muted">
-                      Discovery is optional. If nothing appears here, just type the host or IP below.
-                    </p>
+                    <p className="muted">Discovery is optional. If nothing appears here, just type the host or IP below.</p>
                   ) : (
                     <div className="simple-list">
                       {discoveredDevices.map((device) => (
@@ -1040,23 +1312,59 @@ export function App() {
                 </div>
               </section>
 
-              {!diagnostics?.adb.available ? (
-                <section className="panel section-block warning-block">
-                  <p className="eyebrow">ADB Needed</p>
-                  <h2>ADB is not installed or not detected</h2>
+              <section className="panel section-block info-block">
+                <div className="section-header">
+                  <div>
+                    <p className="eyebrow">ADB Troubleshooter</p>
+                    <h2>Make failure states concrete</h2>
+                  </div>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => void runAdbTroubleshooter()}
+                    disabled={busy === 'troubleshoot' || !hasSelectedTv}
+                  >
+                    Run checks
+                  </button>
+                </div>
+                {!diagnostics?.adb.available ? (
                   <p className="warning-copy">{diagnostics?.adb.installHint}</p>
-                </section>
-              ) : (
-                <section className="panel section-block info-block">
-                  <p className="eyebrow">ADB</p>
-                  <h2>ADB is available</h2>
+                ) : (
                   <p className="muted">
-                    {diagnostics.adb.version}
-                    {' · '}
-                    {diagnostics.adb.path}
+                    {diagnostics.adb.version} · {diagnostics.adb.path}
                   </p>
-                </section>
-              )}
+                )}
+                {health ? (
+                  <div className="health-panel">
+                    <div className="health-summary">
+                      <strong>{health.summary}</strong>
+                      <span>{health.detail}</span>
+                    </div>
+                    <div className="health-grid">
+                      <div className="health-card">
+                        <span className="focus-label">ADB</span>
+                        <strong>{health.adb.ready ? 'Ready' : health.adb.available ? 'Needs attention' : 'Unavailable'}</strong>
+                        <span>{health.adb.lastError ?? `Last success ${formatTimestamp(health.adb.lastConnectedAt)}`}</span>
+                      </div>
+                      <div className="health-card">
+                        <span className="focus-label">Native</span>
+                        <strong>{health.native.ready ? 'Ready' : health.native.available ? 'Optional' : 'Not configured'}</strong>
+                        <span>{health.native.lastError ?? `Last success ${formatTimestamp(health.native.lastConnectedAt)}`}</span>
+                      </div>
+                    </div>
+                    <div className="issue-list">
+                      {health.issues.map((issue) => (
+                        <div key={issue.code} className={`issue-row issue-${issue.severity}`}>
+                          <strong>{issue.summary}</strong>
+                          <span>{issue.detail}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="muted">Choose a TV first to see per-device health and troubleshooting steps.</p>
+                )}
+              </section>
             </div>
 
             <div className="page-stack">
@@ -1076,12 +1384,7 @@ export function App() {
                   <input
                     type="checkbox"
                     checked={form.adbEnabled}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        adbEnabled: event.target.checked
-                      }))
-                    }
+                    onChange={(event) => setForm((current) => ({ ...current, adbEnabled: event.target.checked }))}
                   />
                   <span>Enable ADB for this TV</span>
                 </label>
@@ -1197,9 +1500,7 @@ export function App() {
                     Native remote port
                     <input
                       value={form.nativeRemotePort}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, nativeRemotePort: event.target.value }))
-                      }
+                      onChange={(event) => setForm((current) => ({ ...current, nativeRemotePort: event.target.value }))}
                       placeholder="6466"
                     />
                   </label>
@@ -1240,36 +1541,16 @@ export function App() {
                     Make native the default
                   </button>
                 </div>
-
-                {waitingForNativeCode ? (
-                  <div className="callout">
-                    Pairing is active right now. The code entry box stays visible in the left rail, and it is repeated here on smaller screens.
-                  </div>
-                ) : null}
               </section>
-
-              {renderNativePairingPanel('pairing-panel-inline')}
             </div>
           </section>
         )}
 
         {tab === 'remote' &&
           (isConnected ? (
-            <section className="page-stack">
-              <section className="panel section-block compact-header">
-                <div className="section-header">
-                  <div>
-                    <p className="eyebrow">Remote</p>
-                    <h2>{activeDevice ? activeDevice.name : 'Remote'}</h2>
-                  </div>
-                  <span className="muted">
-                    {activeDevice ? `${backendLabel(activeBackend)} · ${activeDevice.host}` : 'No active TV'}
-                  </span>
-                </div>
-              </section>
-
-              <section className="content-grid remote-layout">
-                <div className="panel remote-pad-panel">
+            <section className="content-grid remote-layout">
+              <div className="page-stack">
+                <section className="panel controls-panel">
                   <div className="panel-heading">
                     <h2>Navigate</h2>
                     <span>Arrow keys and Enter work here too.</span>
@@ -1281,7 +1562,11 @@ export function App() {
                     <button type="button" className="dpad-btn left" onClick={() => void sendRemoteCommand('left')}>
                       Left
                     </button>
-                    <button type="button" className="dpad-btn select" onClick={() => void sendRemoteCommand('select')}>
+                    <button
+                      type="button"
+                      className="dpad-btn select"
+                      onClick={() => void sendRemoteCommand('select')}
+                    >
                       OK
                     </button>
                     <button type="button" className="dpad-btn right" onClick={() => void sendRemoteCommand('right')}>
@@ -1291,9 +1576,9 @@ export function App() {
                       Down
                     </button>
                   </div>
-                </div>
+                </section>
 
-                <div className="panel controls-panel">
+                <section className="panel controls-panel">
                   <div className="panel-heading">
                     <h2>Controls</h2>
                     <span>{activeBackend === 'native' ? 'Using native remote.' : 'Using ADB.'}</span>
@@ -1303,17 +1588,38 @@ export function App() {
                       <button
                         key={button.command}
                         type="button"
-                        className={`remote-button ${button.accent ? 'accent' : ''}`}
+                        className={`remote-button ${button.accent ? 'accent' : ''} ${pendingRemoteCommand === button.command ? 'is-pending' : ''} ${commandCooldownRemaining(button.command) > 0 ? 'is-cooling-down' : ''}`}
                         onClick={() => void sendRemoteCommand(button.command)}
-                        disabled={!isConnected}
+                        disabled={
+                          !isConnected ||
+                          pendingRemoteCommand === button.command ||
+                          commandCooldownRemaining(button.command) > 0
+                        }
                       >
-                        {button.label}
+                        {renderRemoteButtonCopy(button)}
                       </button>
                     ))}
                   </div>
-                </div>
+                </section>
+              </div>
 
-                <div className="panel text-panel">
+              <div className="page-stack">
+                <section className="panel shortcut-panel">
+                  <div className="panel-heading">
+                    <h2>Keyboard Mode</h2>
+                    <span>Only active on the Remote tab, and never while typing into an input.</span>
+                  </div>
+                  <div className="shortcut-grid">
+                    {shortcutLegend.map((shortcut) => (
+                      <div key={shortcut.keys} className="shortcut-card">
+                        <strong>{shortcut.keys}</strong>
+                        <span>{shortcut.action}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="panel text-panel">
                   <div className="panel-heading">
                     <h2>Type remotely</h2>
                     <span>
@@ -1325,9 +1631,7 @@ export function App() {
                     </span>
                   </div>
                   {!capabilities.typing ? (
-                    <div className="callout">
-                      Text entry needs ADB. Go back to Setup and connect or pair ADB for this TV.
-                    </div>
+                    <div className="callout">Text entry needs ADB. Go back to Setup and connect or pair ADB for this TV.</div>
                   ) : null}
                   <textarea
                     value={textInput}
@@ -1356,14 +1660,14 @@ export function App() {
                       Delete
                     </button>
                   </div>
-                </div>
-              </section>
+                </section>
+              </div>
             </section>
           ) : (
             <section className="panel empty-state">
               <p className="eyebrow">Remote</p>
               <h2>No TV is connected yet</h2>
-              <p className="muted">Go to Setup and connect with ADB first. That path is the most reliable here.</p>
+              <p className="muted">Go to Setup and connect with ADB first. That path is still the most reliable here.</p>
               <div className="action-row">
                 <button className="primary-button" type="button" onClick={() => setTab('setup')}>
                   Open setup
@@ -1394,9 +1698,7 @@ export function App() {
                 </div>
 
                 {!capabilities.apps ? (
-                  <div className="callout">
-                    Installed-app browsing needs ADB. Go back to Setup and connect ADB for this TV.
-                  </div>
+                  <div className="callout">Installed-app browsing needs ADB. Go back to Setup and connect ADB for this TV.</div>
                 ) : null}
 
                 {capabilities.apps ? (
@@ -1408,14 +1710,14 @@ export function App() {
                             ? 'Updating installed apps for this TV'
                             : 'Fetching installed apps for this TV'
                           : activeAppsCache
-                            ? 'Showing cached installed apps'
+                            ? 'Showing saved app groups for this TV'
                             : 'No installed-app cache yet'}
                       </strong>
                       <span>
                         {appsAreLoading
                           ? 'This can take a bit when the app is collecting friendly names and icons.'
                           : activeAppsCache
-                            ? `Last updated ${formatAppsUpdatedAt(activeAppsCache.updatedAt)}. This list will stay cached until you update it.`
+                            ? `Last updated ${formatTimestamp(activeAppsCache.updatedAt)}. Favorites and recents are stored per TV.`
                             : 'The first fetch builds and stores the installed-app list for this saved TV.'}
                       </span>
                     </div>
@@ -1432,49 +1734,21 @@ export function App() {
                   disabled={!capabilities.apps}
                 />
 
-                <div className="app-list">
-                  {filteredApps.length === 0 ? (
-                    <p className="muted">
-                      {capabilities.apps
-                        ? activeAppsCache
-                          ? 'No cached apps match that search.'
-                          : 'No installed apps cached yet. Fetch installed apps to build the list for this TV.'
-                        : 'ADB is required for app discovery.'}
-                    </p>
-                  ) : (
-                    filteredApps.map((app) => (
-                      <button
-                        key={app.packageName}
-                        className="app-card"
-                        type="button"
-                        onClick={() => void launchApp(app)}
-                        disabled={busy === app.packageName}
-                        title={app.packageName}
-                      >
-                        <div className="app-card-head">
-                          {app.iconDataUrl ? (
-                            <img className="app-icon" src={app.iconDataUrl} alt="" aria-hidden="true" />
-                          ) : (
-                            <div
-                              className="app-badge"
-                              style={{ backgroundColor: getAppBadgeTone(app.packageName) }}
-                              aria-hidden="true"
-                            >
-                              {getAppBadgeLabel(app)}
-                            </div>
-                          )}
-                          <div className="app-card-copy">
-                            <strong>{app.displayName}</strong>
-                            <small>{app.category === 'leanback' ? 'TV launcher' : 'Standard launcher'}</small>
-                          </div>
-                        </div>
-                        {deferredAppsQuery.trim() ? (
-                          <span className="app-package">{app.packageName}</span>
-                        ) : null}
-                      </button>
-                    ))
-                  )}
-                </div>
+                {visibleAppCount === 0 ? (
+                  <p className="muted">
+                    {capabilities.apps
+                      ? activeAppsCache
+                        ? 'No pinned, recent, or cached apps match that search.'
+                        : 'No installed apps cached yet. Fetch installed apps to build the list for this TV.'
+                      : 'ADB is required for app discovery.'}
+                  </p>
+                ) : (
+                  <>
+                    {renderAppSection('Favorites', appSections.favorites)}
+                    {renderAppSection('Recent', appSections.recents)}
+                    {renderAppSection('All Apps', appSections.others)}
+                  </>
+                )}
               </section>
             </section>
           ) : (

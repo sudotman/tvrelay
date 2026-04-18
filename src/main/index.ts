@@ -8,6 +8,7 @@ import { ElectronDeviceStore } from './services/deviceStore'
 import { DeviceManager } from './services/deviceManager'
 import { RemoteController } from './services/remoteController'
 import { AppController } from './services/appController'
+import { ActionController } from './services/actionController'
 import { NativeRemoteService } from './services/native/nativeRemoteService'
 
 let mainWindow: BrowserWindow | null = null
@@ -80,11 +81,13 @@ async function bootstrap(): Promise<void> {
 
   const remoteController = new RemoteController(deviceManager, adbClient, nativeRemoteService)
   const appController = new AppController(deviceManager, adbClient)
+  const actionController = new ActionController(deviceManager, remoteController, appController)
 
   registerIpc({
     deviceManager,
     remoteController,
     appController,
+    actionController,
     adbLocator,
     adbClient,
     getMainWindow: () => mainWindow

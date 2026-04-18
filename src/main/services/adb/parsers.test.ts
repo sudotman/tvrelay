@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   chunkAdbText,
   deriveConnectionState,
+  parseForegroundApp,
   parseAdbDevices,
   parseLaunchableApps,
   shouldAttemptReconnect
@@ -84,6 +85,18 @@ describe('adb parsers', () => {
     ).toEqual({
       status: 'connected',
       deviceId: 'tv-1'
+    })
+  })
+
+  it('parses the foreground app from dumpsys output', () => {
+    expect(
+      parseForegroundApp(
+        'mCurrentFocus=Window{123456 u0 com.google.android.youtube.tv/com.google.android.apps.youtube.tv.activity.ShellActivity}'
+      )
+    ).toEqual({
+      packageName: 'com.google.android.youtube.tv',
+      activity: 'com.google.android.apps.youtube.tv.activity.ShellActivity',
+      displayName: 'YouTube'
     })
   })
 

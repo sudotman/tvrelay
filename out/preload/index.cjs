@@ -14,7 +14,12 @@ const IPC_CHANNELS = {
   remoteSendText: "remote.sendText",
   appsList: "apps.list",
   appsLaunch: "apps.launch",
+  appsToggleFavorite: "apps.toggleFavorite",
   diagnosticsGetStatus: "diagnostics.getStatus",
+  diagnosticsGetHealth: "diagnostics.getHealth",
+  diagnosticsRunAdbTroubleshooting: "diagnostics.runAdbTroubleshooting",
+  appsGetForegroundApp: "apps.getForegroundApp",
+  actionsRunQuickAction: "actions.runQuickAction",
   connectionStateChanged: "events.connectionStateChanged",
   devicesChanged: "events.devicesChanged"
 };
@@ -32,7 +37,12 @@ const api = {
   sendText: (input) => electron.ipcRenderer.invoke(IPC_CHANNELS.remoteSendText, input),
   listApps: (forceRefresh) => electron.ipcRenderer.invoke(IPC_CHANNELS.appsList, forceRefresh),
   launchApp: (app) => electron.ipcRenderer.invoke(IPC_CHANNELS.appsLaunch, app),
+  toggleFavoriteApp: (packageName) => electron.ipcRenderer.invoke(IPC_CHANNELS.appsToggleFavorite, packageName),
   getDiagnostics: () => electron.ipcRenderer.invoke(IPC_CHANNELS.diagnosticsGetStatus),
+  getHealth: () => electron.ipcRenderer.invoke(IPC_CHANNELS.diagnosticsGetHealth),
+  runAdbTroubleshooting: () => electron.ipcRenderer.invoke(IPC_CHANNELS.diagnosticsRunAdbTroubleshooting),
+  getForegroundApp: () => electron.ipcRenderer.invoke(IPC_CHANNELS.appsGetForegroundApp),
+  runQuickAction: (id) => electron.ipcRenderer.invoke(IPC_CHANNELS.actionsRunQuickAction, id),
   onConnectionStateChanged: (listener) => {
     const wrapped = (_event, state) => listener(state);
     electron.ipcRenderer.on(IPC_CHANNELS.connectionStateChanged, wrapped);

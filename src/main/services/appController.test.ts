@@ -4,13 +4,28 @@ import { AppController } from './appController'
 import type { AdbClient } from './adb/adbClient'
 import type { DeviceManager } from './deviceManager'
 
-function createDeviceManager() {
+function createDeviceManager(options?: { withCachedApps?: boolean }) {
   let activeDevice: SavedDevice = {
     id: 'tv-1',
     name: 'Living Room',
     host: '192.168.1.2',
     connectPort: 5555,
-    mode: 'connect'
+    mode: 'connect',
+    favorites: [],
+    recentApps: [],
+    cachedApps: options?.withCachedApps
+      ? {
+          updatedAt: '2026-04-18T10:00:00.000Z',
+          apps: [
+            {
+              packageName: 'com.netflix.ninja',
+              activity: 'com.netflix.ninja/com.netflix.ninja.MainActivity',
+              displayName: 'Netflix',
+              category: 'leanback'
+            }
+          ]
+        }
+      : undefined
   }
 
   return {
@@ -23,6 +38,22 @@ function createDeviceManager() {
           updatedAt: '2026-04-18T10:00:00.000Z',
           apps
         }
+      }
+
+      return activeDevice
+    }),
+    recordAppLaunch: vi.fn().mockImplementation(async (packageName: string) => {
+      activeDevice = {
+        ...activeDevice,
+        recentApps: [{ packageName, launchedAt: '2026-04-18T10:30:00.000Z' }]
+      }
+
+      return activeDevice
+    }),
+    toggleFavoriteApp: vi.fn().mockImplementation(async (packageName: string) => {
+      activeDevice = {
+        ...activeDevice,
+        favorites: activeDevice.favorites?.includes(packageName) ? [] : [packageName]
       }
 
       return activeDevice
@@ -75,7 +106,22 @@ describe('AppController', () => {
 
     const controller = new AppController(deviceManager, adbClient)
 
-    await expect(controller.launchApp(app)).resolves.toBeUndefined()
+    const feedback = await controller.launchApp(app)
+
+    expect(feedback.status).toBe('sent')
+    expect(feedback.kind).toBe('app')
+    expect(feedback.appPackage).toBe(app.packageName)
     expect(adbClient.launchApp).toHaveBeenCalledWith('tv-serial', app)
+    expect(deviceManager.recordAppLaunch).toHaveBeenCalledWith(app.packageName)
+  })
+
+  it('toggles favorites without disturbing cached apps', async () => {
+    const deviceManager = createDeviceManager({ withCachedApps: true })
+    const controller = new AppController(deviceManager, {} as AdbClient)
+
+    const updated = await controller.toggleFavorite('com.netflix.ninja')
+
+    expect(updated.favorites).toEqual(['com.netflix.ninja'])
+    expect(updated.cachedApps?.apps[0]?.displayName).toBe('Netflix')
   })
 })
