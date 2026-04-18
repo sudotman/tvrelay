@@ -308,8 +308,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
   async disconnectActiveDevice(): Promise<ConnectionState> {
     const activeDevice = this.getActiveDevice()
+    const pendingNativePairing = this.nativeRemoteService.getPendingPairing()
 
-    if (this.activeBackend === 'native') {
+    if (this.activeBackend === 'native' || pendingNativePairing) {
       this.nativeRemoteService.disconnect()
     }
 
@@ -321,7 +322,11 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     this.updateConnectionState({
       status: 'disconnected',
       deviceId: activeDevice?.id,
-      message: activeDevice ? `Disconnected from ${activeDevice.name}.` : 'No device connected.'
+      message: pendingNativePairing
+        ? `Cancelled native pairing for ${pendingNativePairing.name}.`
+        : activeDevice
+          ? `Disconnected from ${activeDevice.name}.`
+          : 'No device connected.'
     })
 
     return this.connectionState
@@ -459,6 +464,8 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   private async connectViaAdb(device: SavedDevice, nativeError?: Error | null): Promise<ConnectionState> {
+    this.nativeRemoteService.disconnect()
+
     this.updateConnectionState({
       status: 'connecting',
       backend: 'adb',
