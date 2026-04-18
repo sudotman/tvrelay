@@ -5,6 +5,7 @@ import type { ConnectionState, SavedDevice } from '@shared/types'
 const api: TvRemoteApi = {
   listDevices: () => ipcRenderer.invoke(IPC_CHANNELS.devicesList),
   saveDevice: (input) => ipcRenderer.invoke(IPC_CHANNELS.devicesSave, input),
+  deleteDevice: (deviceId) => ipcRenderer.invoke(IPC_CHANNELS.devicesDelete, deviceId),
   pairDevice: (input) => ipcRenderer.invoke(IPC_CHANNELS.devicesPair, input),
   beginNativePairing: (input) => ipcRenderer.invoke(IPC_CHANNELS.devicesBeginNativePairing, input),
   completeNativePairing: (input) => ipcRenderer.invoke(IPC_CHANNELS.devicesCompleteNativePairing, input),
@@ -13,8 +14,8 @@ const api: TvRemoteApi = {
   disconnectDevice: () => ipcRenderer.invoke(IPC_CHANNELS.devicesDisconnect),
   sendRemoteCommand: (command) => ipcRenderer.invoke(IPC_CHANNELS.remoteSendKey, command),
   sendText: (input) => ipcRenderer.invoke(IPC_CHANNELS.remoteSendText, input),
-  listApps: () => ipcRenderer.invoke(IPC_CHANNELS.appsList),
-  launchApp: (packageName) => ipcRenderer.invoke(IPC_CHANNELS.appsLaunch, packageName),
+  listApps: (forceRefresh) => ipcRenderer.invoke(IPC_CHANNELS.appsList, forceRefresh),
+  launchApp: (app) => ipcRenderer.invoke(IPC_CHANNELS.appsLaunch, app),
   getDiagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.diagnosticsGetStatus),
   onConnectionStateChanged: (listener) => {
     const wrapped = (_event: Electron.IpcRendererEvent, state: ConnectionState) => listener(state)

@@ -153,4 +153,65 @@ describe('DeviceManager', () => {
     expect(adbClient.connect).toHaveBeenCalledTimes(1)
     manager.dispose()
   })
+
+  it('removes a saved TV and clears the active session when deleting it', async () => {
+    const adbClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-4' })
+    } as unknown as AdbClient
+
+    const manager = new DeviceManager(createStore(), adbClient, createNativeRemoteService())
+    await manager.init()
+
+    await manager.connectDevice({
+      id: 'tv-4',
+      name: 'Den TV',
+      host: '192.168.1.12',
+      connectPort: 5555,
+      mode: 'connect'
+    })
+
+    const devices = await manager.deleteDevice('tv-4')
+
+    expect(devices).toHaveLength(0)
+    expect(manager.getActiveDevice()).toBeNull()
+    expect(manager.getActiveBackend()).toBeNull()
+    expect(manager.getConnectionState().status).toBe('disconnected')
+    expect(adbClient.disconnect).toHaveBeenCalledTimes(1)
+    manager.dispose()
+  })
+
+  it('persists cached installed apps for a saved TV', async () => {
+    const adbClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-5' })
+    } as unknown as AdbClient
+
+    const manager = new DeviceManager(createStore(), adbClient, createNativeRemoteService())
+    await manager.init()
+
+    await manager.connectDevice({
+      id: 'tv-5',
+      name: 'Family TV',
+      host: '192.168.1.14',
+      connectPort: 5555,
+      mode: 'connect'
+    })
+
+    const updated = await manager.updateDeviceAppsCache('tv-5', [
+      {
+        packageName: 'com.netflix.ninja',
+        activity: 'com.netflix.ninja/com.netflix.ninja.MainActivity',
+        displayName: 'Netflix',
+        category: 'leanback',
+        iconDataUrl: 'data:image/png;base64,abc'
+      }
+    ])
+
+    expect(updated.cachedApps?.apps).toHaveLength(1)
+    expect(updated.cachedApps?.updatedAt).toBeTruthy()
+    expect(manager.getActiveDevice()?.cachedApps?.apps[0]?.displayName).toBe('Netflix')
+    manager.dispose()
+  })
 })

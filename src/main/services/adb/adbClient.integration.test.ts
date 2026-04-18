@@ -11,6 +11,8 @@ interface MockState {
   pairSuccess: boolean
   connectSuccess: boolean
   serialState: 'device' | 'unauthorized' | 'missing'
+  failLeanbackQuery?: boolean
+  failLauncherQuery?: boolean
 }
 
 function createStore(): DeviceStore {
@@ -95,7 +97,29 @@ if (args[0] === 'devices') {
 }
 
 if (args[0] === '-s' && args[2] === 'shell' && args[3] === 'cmd' && args[4] === 'package') {
+  const joined = args.join(' ')
+
+  if (joined.includes('query-intent-activities') && joined.includes('android.intent.category.LEANBACK_LAUNCHER') && state.failLeanbackQuery) {
+    console.error('leanback query failed')
+    process.exit(1)
+  }
+
+  if (joined.includes('query-intent-activities') && joined.includes('android.intent.category.LAUNCHER') && state.failLauncherQuery) {
+    console.error('launcher query failed')
+    process.exit(1)
+  }
+
+  if (joined.includes('resolve-activity')) {
+    console.log('com.netflix.ninja/.MainActivity')
+    process.exit(0)
+  }
+
   console.log('com.netflix.ninja/.MainActivity')
+  process.exit(0)
+}
+
+if (args[0] === '-s' && args[2] === 'shell' && args[3] === 'pm' && args[4] === 'list' && args[5] === 'packages') {
+  console.log('package:com.netflix.ninja')
   process.exit(0)
 }
 
@@ -215,5 +239,17 @@ describe('AdbClient integration', () => {
     const state = await manager.performHealthCheck()
     expect(state.status).toBe('connected')
     manager.dispose()
+  })
+
+  it('falls back when the leanback query is not supported on a TV', async () => {
+    const { adbPath } = await createMockAdb({
+      pairSuccess: true,
+      connectSuccess: true,
+      serialState: 'device',
+      failLeanbackQuery: true
+    })
+    const client = new AdbClient(adbPath)
+
+    await expect(client.listLaunchableApps('192.168.1.5:5555')).resolves.toHaveLength(1)
   })
 })

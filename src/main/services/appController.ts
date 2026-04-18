@@ -8,16 +8,27 @@ export class AppController {
     private readonly adbClient: AdbClient
   ) {}
 
-  async listApps(): Promise<LaunchableApp[]> {
-    return this.deviceManager.withAdbAccess((serial) => this.adbClient.listLaunchableApps(serial))
+  async listApps(forceRefresh = false): Promise<LaunchableApp[]> {
+    const activeDevice = this.deviceManager.getActiveDevice()
+
+    if (!activeDevice) {
+      throw new Error('Connect to a TV before browsing installed apps.')
+    }
+
+    if (!forceRefresh && activeDevice.cachedApps) {
+      return activeDevice.cachedApps.apps
+    }
+
+    const apps = await this.deviceManager.withAdbAccess((serial) => this.adbClient.listLaunchableApps(serial))
+    const updated = await this.deviceManager.updateDeviceAppsCache(activeDevice.id, apps)
+    return updated.cachedApps?.apps ?? apps
   }
 
-  async launchApp(packageName: string): Promise<void> {
-    const apps = await this.deviceManager.withAdbAccess((serial) => this.adbClient.listLaunchableApps(serial))
-    const app = apps.find((item) => item.packageName === packageName)
+  async launchApp(app: LaunchableApp): Promise<void> {
+    const activeDevice = this.deviceManager.getActiveDevice()
 
-    if (!app) {
-      throw new Error('Selected app is no longer launchable on this TV.')
+    if (!activeDevice) {
+      throw new Error('Connect to a TV before launching an app.')
     }
 
     await this.deviceManager.withAdbAccess((serial) => this.adbClient.launchApp(serial, app))

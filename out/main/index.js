@@ -4,10 +4,11 @@ import { ipcMain, app, BrowserWindow } from "electron";
 import fs from "node:fs/promises";
 import os from "node:os";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
+import pkg from "node-apk";
 import Store from "electron-store";
 import { EventEmitter } from "node:events";
-import { randomUUID } from "node:crypto";
 import { Bonjour } from "bonjour-service";
 import { AndroidRemote, RemoteDirection } from "androidtv-remote";
 import __cjs_mod__ from "node:module";
@@ -17,6 +18,7 @@ const require2 = __cjs_mod__.createRequire(import.meta.url);
 const IPC_CHANNELS = {
   devicesList: "devices.list",
   devicesSave: "devices.save",
+  devicesDelete: "devices.delete",
   devicesPair: "devices.pair",
   devicesBeginNativePairing: "devices.beginNativePairing",
   devicesCompleteNativePairing: "devices.completeNativePairing",
@@ -35,6 +37,7 @@ function registerIpc(options) {
   const { deviceManager: deviceManager2, remoteController, appController, adbLocator, adbClient, getMainWindow } = options;
   ipcMain.handle(IPC_CHANNELS.devicesList, () => deviceManager2.listDevices());
   ipcMain.handle(IPC_CHANNELS.devicesSave, (_event, input) => deviceManager2.saveDevice(input));
+  ipcMain.handle(IPC_CHANNELS.devicesDelete, (_event, deviceId) => deviceManager2.deleteDevice(deviceId));
   ipcMain.handle(IPC_CHANNELS.devicesPair, (_event, input) => deviceManager2.pairAndConnect(input));
   ipcMain.handle(
     IPC_CHANNELS.devicesBeginNativePairing,
@@ -49,8 +52,8 @@ function registerIpc(options) {
   ipcMain.handle(IPC_CHANNELS.devicesDisconnect, () => deviceManager2.disconnectActiveDevice());
   ipcMain.handle(IPC_CHANNELS.remoteSendKey, (_event, command) => remoteController.sendCommand(command));
   ipcMain.handle(IPC_CHANNELS.remoteSendText, (_event, input) => remoteController.sendText(input.text));
-  ipcMain.handle(IPC_CHANNELS.appsList, () => appController.listApps());
-  ipcMain.handle(IPC_CHANNELS.appsLaunch, (_event, packageName) => appController.launchApp(packageName));
+  ipcMain.handle(IPC_CHANNELS.appsList, (_event, forceRefresh) => appController.listApps(forceRefresh));
+  ipcMain.handle(IPC_CHANNELS.appsLaunch, (_event, app2) => appController.launchApp(app2));
   ipcMain.handle(IPC_CHANNELS.diagnosticsGetStatus, async () => {
     const adbInfo = await adbLocator.locate();
     const version = adbInfo.available ? await adbClient.version() : void 0;
@@ -132,6 +135,21 @@ class AdbLocator {
     };
   }
 }
+const APP_TITLE_ALIASES = {
+  "com.apple.atve.androidtv.appletv": "Apple TV",
+  "com.disney.disneyplus": "Disney+",
+  "com.google.android.play.games": "Google Play Games",
+  "com.google.android.youtube.tv": "YouTube",
+  "com.netflix.ninja": "Netflix",
+  "com.amazon.amazonvideo.livingroom": "Prime Video",
+  "com.alphainventor.filemanager": "File Manager",
+  "com.mxtech.videoplayer.ad": "MX Player",
+  "com.spotify.tv.android": "Spotify",
+  "in.startv.hotstar": "Hotstar",
+  "com.xiaomi.mitv.manualhelp": "Manual Help",
+  "com.xiaomi.mitv.mediaexplorer": "Media Explorer",
+  "org.localsend.localsend_app": "LocalSend"
+};
 function parseAdbVersion(output) {
   return output.split(/\r?\n/).map((line) => line.trim()).find((line) => line.toLowerCase().startsWith("android debug bridge version")) ?? "Unknown";
 }
@@ -142,7 +160,29 @@ function parseAdbDevices(output) {
   }).filter((item) => item !== null);
 }
 function humanizePackage(packageName) {
-  return packageName.split(".").at(-1).replace(/[-_]/g, " ").replace(/\b\w/g, (match) => match.toUpperCase());
+  if (APP_TITLE_ALIASES[packageName]) {
+    return APP_TITLE_ALIASES[packageName];
+  }
+  const segments = packageName.split(".").filter(Boolean);
+  const preferredSegment = [...segments].reverse().find((segment) => !["android", "tv", "app", "mobile"].includes(segment.toLowerCase())) ?? segments.at(-1) ?? packageName;
+  const normalized = preferredSegment.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/([a-zA-Z])(\d)/g, "$1 $2").replace(/(\d)([a-zA-Z])/g, "$1 $2").replace(/[-_]/g, " ").trim();
+  const acronymized = normalized.split(/\s+/).filter(Boolean).map((token) => {
+    const lower = token.toLowerCase();
+    if (lower === "tv") {
+      return "TV";
+    }
+    if (lower === "atv") {
+      return "ATV";
+    }
+    if (lower === "mitv") {
+      return "Mi TV";
+    }
+    if (lower === "appletv") {
+      return "Apple TV";
+    }
+    return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+  }).join(" ");
+  return acronymized || packageName;
 }
 function parseLaunchableApps(output, category) {
   return output.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.includes("/") && !line.toLowerCase().includes("no activities found")).map((line) => {
@@ -217,6 +257,7 @@ function shouldAttemptReconnect(activeDevice, state, isReconnectInFlight) {
   }
   return state.status === "disconnected" || state.status === "error";
 }
+const { Apk } = pkg;
 const execFileAsync = promisify(execFile);
 class AdbClient {
   constructor(adbPath, defaultTimeoutMs = 8e3) {
@@ -273,8 +314,172 @@ ${stderr}`.toLowerCase();
       { androidCategory: "android.intent.category.LAUNCHER", category: "launcher" }
     ];
     const appsByPackage = /* @__PURE__ */ new Map();
+    const failures = [];
     for (const { androidCategory, category } of categories) {
-      const { stdout } = await this.runSerial(serial, [
+      try {
+        const apps2 = await this.listAppsForCategory(serial, androidCategory, category);
+        for (const app2 of apps2) {
+          if (!appsByPackage.has(app2.packageName) || category === "leanback") {
+            appsByPackage.set(app2.packageName, app2);
+          }
+        }
+      } catch (error) {
+        failures.push(error instanceof Error ? error : new Error("App discovery failed."));
+      }
+    }
+    if (appsByPackage.size === 0 && failures.length > 0) {
+      throw failures[0];
+    }
+    const apps = [...appsByPackage.values()].sort((left, right) => left.displayName.localeCompare(right.displayName));
+    return this.enrichAppsMetadata(serial, apps);
+  }
+  async launchApp(serial, app2) {
+    await this.runSerial(serial, ["shell", "am", "start", "-n", app2.activity]);
+  }
+  async runSerial(serial, args, options) {
+    return this.runRaw(["-s", serial, ...args], options);
+  }
+  async enrichAppsMetadata(serial, apps) {
+    const enriched = [];
+    for (const app2 of apps) {
+      enriched.push(await this.enrichAppMetadata(serial, app2));
+    }
+    return enriched.sort((left, right) => left.displayName.localeCompare(right.displayName));
+  }
+  async enrichAppMetadata(serial, app2) {
+    let tempDir = null;
+    let apkPath = null;
+    try {
+      const remoteApkPath = await this.getRemoteApkPath(serial, app2.packageName);
+      if (!remoteApkPath) {
+        return app2;
+      }
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "android-tv-remote-apk-"));
+      apkPath = path.join(tempDir, `${randomUUID()}.apk`);
+      await this.runRaw(["-s", serial, "pull", remoteApkPath, apkPath], {
+        timeoutMs: 12e4
+      });
+      const apk = new Apk(apkPath);
+      try {
+        const [manifest, resources] = await Promise.all([apk.getManifestInfo(), apk.getResources()]);
+        const displayName = this.resolveAppLabel(manifest.applicationLabel, resources) ?? app2.displayName;
+        const iconDataUrl = await this.resolveAppIconDataUrl(apk, manifest.applicationIcon, resources);
+        return {
+          ...app2,
+          displayName,
+          iconDataUrl: iconDataUrl ?? app2.iconDataUrl
+        };
+      } finally {
+        apk.close();
+      }
+    } catch {
+      return app2;
+    } finally {
+      if (tempDir) {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      } else if (apkPath) {
+        await fs.rm(apkPath, { force: true });
+      }
+    }
+  }
+  async getRemoteApkPath(serial, packageName) {
+    try {
+      const { stdout } = await this.runSerial(serial, ["shell", "pm", "path", packageName], {
+        timeoutMs: 1e4
+      });
+      const apkPaths = stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.startsWith("package:")).map((line) => line.slice("package:".length));
+      return apkPaths.find((item) => item.endsWith("base.apk")) ?? apkPaths[0] ?? null;
+    } catch {
+      return null;
+    }
+  }
+  resolveAppLabel(labelValue, resources) {
+    if (typeof labelValue === "string" && labelValue.trim()) {
+      return labelValue.trim();
+    }
+    if (typeof labelValue !== "number") {
+      return null;
+    }
+    const resource = this.pickBestStringResource(resources.resolve(labelValue));
+    return typeof resource?.value === "string" && resource.value.trim() ? resource.value.trim() : null;
+  }
+  async resolveAppIconDataUrl(apk, iconResourceId, resources) {
+    if (!iconResourceId) {
+      return null;
+    }
+    const resource = this.pickBestIconResource(resources.resolve(iconResourceId));
+    if (!resource || typeof resource.value !== "string") {
+      return null;
+    }
+    const mimeType = this.getIconMimeType(resource.value);
+    if (!mimeType) {
+      return null;
+    }
+    const iconBytes = await apk.extract(resource.value);
+    return `data:${mimeType};base64,${iconBytes.toString("base64")}`;
+  }
+  pickBestStringResource(resources) {
+    const englishResource = resources.find((resource) => typeof resource.value === "string" && resource.locale?.language === "en") ?? resources.find((resource) => typeof resource.value === "string" && !resource.locale?.language) ?? resources.find((resource) => typeof resource.value === "string");
+    return englishResource ?? null;
+  }
+  pickBestIconResource(resources) {
+    const ranked = resources.filter((resource) => typeof resource.value === "string").sort((left, right) => this.rankIconPath(String(right.value)) - this.rankIconPath(String(left.value)));
+    return ranked[0] ?? null;
+  }
+  rankIconPath(resourcePath) {
+    const normalized = resourcePath.toLowerCase();
+    if (normalized.endsWith(".png")) {
+      return 90 + this.rankIconDensity(normalized);
+    }
+    if (normalized.endsWith(".webp")) {
+      return 80 + this.rankIconDensity(normalized);
+    }
+    if (normalized.endsWith(".jpg") || normalized.endsWith(".jpeg")) {
+      return 70 + this.rankIconDensity(normalized);
+    }
+    return this.rankIconDensity(normalized);
+  }
+  rankIconDensity(resourcePath) {
+    if (resourcePath.includes("xxxhdpi")) return 60;
+    if (resourcePath.includes("xxhdpi")) return 50;
+    if (resourcePath.includes("xhdpi")) return 40;
+    if (resourcePath.includes("hdpi")) return 30;
+    if (resourcePath.includes("mdpi")) return 20;
+    if (resourcePath.includes("drawable")) return 10;
+    return 0;
+  }
+  getIconMimeType(resourcePath) {
+    const normalized = resourcePath.toLowerCase();
+    if (normalized.endsWith(".png")) {
+      return "image/png";
+    }
+    if (normalized.endsWith(".webp")) {
+      return "image/webp";
+    }
+    if (normalized.endsWith(".jpg") || normalized.endsWith(".jpeg")) {
+      return "image/jpeg";
+    }
+    return null;
+  }
+  async listAppsForCategory(serial, androidCategory, category) {
+    let lastError = null;
+    for (const args of this.getCategoryQueryCommands(androidCategory)) {
+      try {
+        const { stdout } = await this.runSerial(serial, args, { timeoutMs: 12e3 });
+        return parseLaunchableApps(stdout, category);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error("App discovery failed.");
+      }
+    }
+    try {
+      return await this.listAppsByResolvingPackages(serial, androidCategory, category);
+    } catch (error) {
+      throw lastError ?? (error instanceof Error ? error : new Error("App discovery failed."));
+    }
+  }
+  getCategoryQueryCommands(androidCategory) {
+    return [
+      [
         "shell",
         "cmd",
         "package",
@@ -284,20 +489,67 @@ ${stderr}`.toLowerCase();
         "android.intent.action.MAIN",
         "-c",
         androidCategory
-      ]);
-      for (const app2 of parseLaunchableApps(stdout, category)) {
-        if (!appsByPackage.has(app2.packageName) || category === "leanback") {
-          appsByPackage.set(app2.packageName, app2);
-        }
+      ],
+      [
+        "shell",
+        "pm",
+        "query-intent-activities",
+        "--brief",
+        "-a",
+        "android.intent.action.MAIN",
+        "-c",
+        androidCategory
+      ]
+    ];
+  }
+  async listAppsByResolvingPackages(serial, androidCategory, category) {
+    const packages = await this.listInstalledPackages(serial);
+    const apps = [];
+    for (const packageName of packages) {
+      const app2 = await this.resolveLaunchableActivity(serial, packageName, androidCategory, category);
+      if (app2) {
+        apps.push(app2);
       }
     }
-    return [...appsByPackage.values()].sort((left, right) => left.displayName.localeCompare(right.displayName));
+    return apps;
   }
-  async launchApp(serial, app2) {
-    await this.runSerial(serial, ["shell", "am", "start", "-n", app2.activity]);
+  async listInstalledPackages(serial) {
+    const { stdout } = await this.runSerial(serial, ["shell", "pm", "list", "packages"], { timeoutMs: 2e4 });
+    return stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.startsWith("package:")).map((line) => line.slice("package:".length));
   }
-  async runSerial(serial, args, options) {
-    return this.runRaw(["-s", serial, ...args], options);
+  async resolveLaunchableActivity(serial, packageName, androidCategory, category) {
+    for (const args of [
+      [
+        "shell",
+        "cmd",
+        "package",
+        "resolve-activity",
+        "--brief",
+        "-a",
+        "android.intent.action.MAIN",
+        "-c",
+        androidCategory,
+        packageName
+      ],
+      [
+        "shell",
+        "pm",
+        "resolve-activity",
+        "--brief",
+        "-a",
+        "android.intent.action.MAIN",
+        "-c",
+        androidCategory,
+        packageName
+      ]
+    ]) {
+      try {
+        const { stdout } = await this.runSerial(serial, args, { timeoutMs: 5e3 });
+        return parseLaunchableApps(stdout, category)[0] ?? null;
+      } catch {
+      }
+    }
+    return null;
   }
   async runRaw(args, options) {
     try {
@@ -429,6 +681,49 @@ class DeviceManager extends EventEmitter {
     this.persist();
     this.emitDevicesChanged();
     return device;
+  }
+  async deleteDevice(deviceId) {
+    const device = this.savedDevices.find((item) => item.id === deviceId);
+    if (!device) {
+      return this.listDevices();
+    }
+    const pendingNativePairing = this.nativeRemoteService.getPendingPairing();
+    const shouldTearDownSession = this.activeDeviceId === deviceId || pendingNativePairing?.id === deviceId;
+    if (shouldTearDownSession) {
+      if (this.activeBackend === "native" || pendingNativePairing) {
+        this.nativeRemoteService.disconnect();
+      }
+      if (this.activeBackend === "adb") {
+        await this.adbClient.disconnect(buildSerial(device));
+      }
+      this.activeDeviceId = null;
+      this.activeBackend = null;
+      this.updateConnectionState({
+        status: "disconnected",
+        message: `${device.name} was removed from saved TVs.`
+      });
+    }
+    this.savedDevices = this.savedDevices.filter((item) => item.id !== deviceId);
+    this.persist();
+    this.emitDevicesChanged();
+    return this.listDevices();
+  }
+  async updateDeviceAppsCache(deviceId, apps) {
+    const existing = this.savedDevices.find((item) => item.id === deviceId);
+    if (!existing) {
+      throw new Error("Cannot update apps for a TV that is no longer saved.");
+    }
+    const updated = this.normalizeDevice({
+      ...existing,
+      cachedApps: {
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        apps
+      }
+    });
+    this.savedDevices = this.savedDevices.map((item) => item.id === deviceId ? updated : item);
+    this.persist();
+    this.emitDevicesChanged();
+    return updated;
   }
   async beginNativePairing(input) {
     const saved = await this.saveDevice({
@@ -755,7 +1050,8 @@ class DeviceManager extends EventEmitter {
       adbEnabled: input.adbEnabled ?? true,
       nativeRemote: input.nativeRemote,
       lastConnectedAt: input.lastConnectedAt,
-      lastConnectedBackend: input.lastConnectedBackend
+      lastConnectedBackend: input.lastConnectedBackend,
+      cachedApps: input.cachedApps
     };
   }
   updateConnectionState(nextState) {
@@ -822,14 +1118,22 @@ class AppController {
     this.deviceManager = deviceManager2;
     this.adbClient = adbClient;
   }
-  async listApps() {
-    return this.deviceManager.withAdbAccess((serial) => this.adbClient.listLaunchableApps(serial));
-  }
-  async launchApp(packageName) {
+  async listApps(forceRefresh = false) {
+    const activeDevice = this.deviceManager.getActiveDevice();
+    if (!activeDevice) {
+      throw new Error("Connect to a TV before browsing installed apps.");
+    }
+    if (!forceRefresh && activeDevice.cachedApps) {
+      return activeDevice.cachedApps.apps;
+    }
     const apps = await this.deviceManager.withAdbAccess((serial) => this.adbClient.listLaunchableApps(serial));
-    const app2 = apps.find((item) => item.packageName === packageName);
-    if (!app2) {
-      throw new Error("Selected app is no longer launchable on this TV.");
+    const updated = await this.deviceManager.updateDeviceAppsCache(activeDevice.id, apps);
+    return updated.cachedApps?.apps ?? apps;
+  }
+  async launchApp(app2) {
+    const activeDevice = this.deviceManager.getActiveDevice();
+    if (!activeDevice) {
+      throw new Error("Connect to a TV before launching an app.");
     }
     await this.deviceManager.withAdbAccess((serial) => this.adbClient.launchApp(serial, app2));
   }

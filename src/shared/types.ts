@@ -26,6 +26,7 @@ export interface SavedDevice {
   nativeRemote?: NativeRemoteConfig
   lastConnectedAt?: string
   lastConnectedBackend?: ConnectionBackend
+  cachedApps?: CachedAppsSnapshot
 }
 
 export type ConnectionStatus =
@@ -48,6 +49,12 @@ export interface LaunchableApp {
   activity: string
   displayName: string
   category: 'leanback' | 'launcher'
+  iconDataUrl?: string
+}
+
+export interface CachedAppsSnapshot {
+  updatedAt: string
+  apps: LaunchableApp[]
 }
 
 export interface DiscoveredNativeDevice {

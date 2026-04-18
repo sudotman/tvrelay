@@ -35,15 +35,40 @@ describe('adb parsers', () => {
       {
         packageName: 'com.netflix.ninja',
         activity: 'com.netflix.ninja/com.netflix.ninja.MainActivity',
-        displayName: 'Ninja',
+        displayName: 'Netflix',
         category: 'leanback'
       },
       {
         packageName: 'com.google.android.youtube.tv',
         activity:
           'com.google.android.youtube.tv/com.google.android.apps.youtube.tv.activity.ShellActivity',
-        displayName: 'Tv',
+        displayName: 'YouTube',
         category: 'leanback'
+      }
+    ])
+  })
+
+  it('uses friendlier titles for known or compound package names', () => {
+    const apps = parseLaunchableApps(
+      `
+      com.apple.atve.androidtv.appletv/.MainActivity
+      com.xiaomi.mitv.manualhelp/.MainActivity
+      `,
+      'launcher'
+    )
+
+    expect(apps).toEqual([
+      {
+        packageName: 'com.apple.atve.androidtv.appletv',
+        activity: 'com.apple.atve.androidtv.appletv/com.apple.atve.androidtv.appletv.MainActivity',
+        displayName: 'Apple TV',
+        category: 'launcher'
+      },
+      {
+        packageName: 'com.xiaomi.mitv.manualhelp',
+        activity: 'com.xiaomi.mitv.manualhelp/com.xiaomi.mitv.manualhelp.MainActivity',
+        displayName: 'Manual Help',
+        category: 'launcher'
       }
     ])
   })

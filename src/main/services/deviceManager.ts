@@ -56,6 +56,7 @@ interface StoredDeviceDraft {
   adbEnabled?: SavedDevice['adbEnabled']
   lastConnectedAt?: SavedDevice['lastConnectedAt']
   lastConnectedBackend?: SavedDevice['lastConnectedBackend']
+  cachedApps?: SavedDevice['cachedApps']
 }
 
 export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
@@ -168,6 +169,64 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     this.persist()
     this.emitDevicesChanged()
     return device
+  }
+
+  async deleteDevice(deviceId: string): Promise<SavedDevice[]> {
+    const device = this.savedDevices.find((item) => item.id === deviceId)
+
+    if (!device) {
+      return this.listDevices()
+    }
+
+    const pendingNativePairing = this.nativeRemoteService.getPendingPairing()
+    const shouldTearDownSession =
+      this.activeDeviceId === deviceId || pendingNativePairing?.id === deviceId
+
+    if (shouldTearDownSession) {
+      if (this.activeBackend === 'native' || pendingNativePairing) {
+        this.nativeRemoteService.disconnect()
+      }
+
+      if (this.activeBackend === 'adb') {
+        await this.adbClient.disconnect(buildSerial(device))
+      }
+
+      this.activeDeviceId = null
+      this.activeBackend = null
+      this.updateConnectionState({
+        status: 'disconnected',
+        message: `${device.name} was removed from saved TVs.`
+      })
+    }
+
+    this.savedDevices = this.savedDevices.filter((item) => item.id !== deviceId)
+    this.persist()
+    this.emitDevicesChanged()
+    return this.listDevices()
+  }
+
+  async updateDeviceAppsCache(
+    deviceId: string,
+    apps: NonNullable<SavedDevice['cachedApps']>['apps']
+  ): Promise<SavedDevice> {
+    const existing = this.savedDevices.find((item) => item.id === deviceId)
+
+    if (!existing) {
+      throw new Error('Cannot update apps for a TV that is no longer saved.')
+    }
+
+    const updated = this.normalizeDevice({
+      ...existing,
+      cachedApps: {
+        updatedAt: new Date().toISOString(),
+        apps
+      }
+    })
+
+    this.savedDevices = this.savedDevices.map((item) => (item.id === deviceId ? updated : item))
+    this.persist()
+    this.emitDevicesChanged()
+    return updated
   }
 
   async beginNativePairing(input: BeginNativePairingInput): Promise<ConnectionState> {
@@ -580,7 +639,8 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       adbEnabled: input.adbEnabled ?? true,
       nativeRemote: input.nativeRemote,
       lastConnectedAt: input.lastConnectedAt,
-      lastConnectedBackend: input.lastConnectedBackend
+      lastConnectedBackend: input.lastConnectedBackend,
+      cachedApps: input.cachedApps
     }
   }
 

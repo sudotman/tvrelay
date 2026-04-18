@@ -4,6 +4,7 @@ import type {
   BeginNativePairingInput,
   CompleteNativePairingInput,
   ConnectDeviceInput,
+  LaunchableApp,
   PairDeviceInput,
   RemoteCommand,
   SaveDeviceInput,
@@ -31,6 +32,8 @@ export function registerIpc(options: RegisterIpcOptions): void {
 
   ipcMain.handle(IPC_CHANNELS.devicesSave, (_event, input: SaveDeviceInput) => deviceManager.saveDevice(input))
 
+  ipcMain.handle(IPC_CHANNELS.devicesDelete, (_event, deviceId: string) => deviceManager.deleteDevice(deviceId))
+
   ipcMain.handle(IPC_CHANNELS.devicesPair, (_event, input: PairDeviceInput) => deviceManager.pairAndConnect(input))
 
   ipcMain.handle(IPC_CHANNELS.devicesBeginNativePairing, (_event, input: BeginNativePairingInput) =>
@@ -51,9 +54,9 @@ export function registerIpc(options: RegisterIpcOptions): void {
 
   ipcMain.handle(IPC_CHANNELS.remoteSendText, (_event, input: SendTextInput) => remoteController.sendText(input.text))
 
-  ipcMain.handle(IPC_CHANNELS.appsList, () => appController.listApps())
+  ipcMain.handle(IPC_CHANNELS.appsList, (_event, forceRefresh?: boolean) => appController.listApps(forceRefresh))
 
-  ipcMain.handle(IPC_CHANNELS.appsLaunch, (_event, packageName: string) => appController.launchApp(packageName))
+  ipcMain.handle(IPC_CHANNELS.appsLaunch, (_event, app: LaunchableApp) => appController.launchApp(app))
 
   ipcMain.handle(IPC_CHANNELS.diagnosticsGetStatus, async () => {
     const adbInfo = await adbLocator.locate()

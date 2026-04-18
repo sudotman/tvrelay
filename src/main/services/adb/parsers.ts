@@ -1,5 +1,21 @@
 import type { ConnectionState, LaunchableApp, SavedDevice } from '@shared/types'
 
+const APP_TITLE_ALIASES: Record<string, string> = {
+  'com.apple.atve.androidtv.appletv': 'Apple TV',
+  'com.disney.disneyplus': 'Disney+',
+  'com.google.android.play.games': 'Google Play Games',
+  'com.google.android.youtube.tv': 'YouTube',
+  'com.netflix.ninja': 'Netflix',
+  'com.amazon.amazonvideo.livingroom': 'Prime Video',
+  'com.alphainventor.filemanager': 'File Manager',
+  'com.mxtech.videoplayer.ad': 'MX Player',
+  'com.spotify.tv.android': 'Spotify',
+  'in.startv.hotstar': 'Hotstar',
+  'com.xiaomi.mitv.manualhelp': 'Manual Help',
+  'com.xiaomi.mitv.mediaexplorer': 'Media Explorer',
+  'org.localsend.localsend_app': 'LocalSend'
+}
+
 export interface ParsedAdbDevice {
   serial: string
   state: string
@@ -25,11 +41,52 @@ export function parseAdbDevices(output: string): ParsedAdbDevice[] {
 }
 
 function humanizePackage(packageName: string): string {
-  return packageName
-    .split('.')
-    .at(-1)!
+  if (APP_TITLE_ALIASES[packageName]) {
+    return APP_TITLE_ALIASES[packageName]
+  }
+
+  const segments = packageName.split('.').filter(Boolean)
+  const preferredSegment =
+    [...segments]
+      .reverse()
+      .find((segment) => !['android', 'tv', 'app', 'mobile'].includes(segment.toLowerCase())) ??
+    segments.at(-1) ??
+    packageName
+
+  const normalized = preferredSegment
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([a-zA-Z])(\d)/g, '$1 $2')
+    .replace(/(\d)([a-zA-Z])/g, '$1 $2')
     .replace(/[-_]/g, ' ')
-    .replace(/\b\w/g, (match) => match.toUpperCase())
+    .trim()
+
+  const acronymized = normalized
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => {
+      const lower = token.toLowerCase()
+
+      if (lower === 'tv') {
+        return 'TV'
+      }
+
+      if (lower === 'atv') {
+        return 'ATV'
+      }
+
+      if (lower === 'mitv') {
+        return 'Mi TV'
+      }
+
+      if (lower === 'appletv') {
+        return 'Apple TV'
+      }
+
+      return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase()
+    })
+    .join(' ')
+
+  return acronymized || packageName
 }
 
 export function parseLaunchableApps(output: string, category: 'leanback' | 'launcher'): LaunchableApp[] {

@@ -1,5 +1,11 @@
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
+import pkg from 'node-apk'
+import type { Apk as ApkType, Resource, Resources } from 'node-apk'
 import type { LaunchableApp } from '@shared/types'
 import {
   buildSerial,
@@ -9,6 +15,8 @@ import {
   parseAdbVersion,
   parseLaunchableApps
 } from './parsers'
+
+const { Apk } = pkg
 import type { ConnectionState, SavedDevice } from '@shared/types'
 
 const execFileAsync = promisify(execFile)
@@ -79,28 +87,28 @@ export class AdbClient {
     ]
 
     const appsByPackage = new Map<string, LaunchableApp>()
+    const failures: Error[] = []
 
     for (const { androidCategory, category } of categories) {
-      const { stdout } = await this.runSerial(serial, [
-        'shell',
-        'cmd',
-        'package',
-        'query-intent-activities',
-        '--brief',
-        '-a',
-        'android.intent.action.MAIN',
-        '-c',
-        androidCategory
-      ])
+      try {
+        const apps = await this.listAppsForCategory(serial, androidCategory, category)
 
-      for (const app of parseLaunchableApps(stdout, category)) {
-        if (!appsByPackage.has(app.packageName) || category === 'leanback') {
-          appsByPackage.set(app.packageName, app)
+        for (const app of apps) {
+          if (!appsByPackage.has(app.packageName) || category === 'leanback') {
+            appsByPackage.set(app.packageName, app)
+          }
         }
+      } catch (error) {
+        failures.push(error instanceof Error ? error : new Error('App discovery failed.'))
       }
     }
 
-    return [...appsByPackage.values()].sort((left, right) => left.displayName.localeCompare(right.displayName))
+    if (appsByPackage.size === 0 && failures.length > 0) {
+      throw failures[0]
+    }
+
+    const apps = [...appsByPackage.values()].sort((left, right) => left.displayName.localeCompare(right.displayName))
+    return this.enrichAppsMetadata(serial, apps)
   }
 
   async launchApp(serial: string, app: LaunchableApp): Promise<void> {
@@ -113,6 +121,295 @@ export class AdbClient {
     options?: { timeoutMs?: number }
   ): Promise<{ stdout: string; stderr: string }> {
     return this.runRaw(['-s', serial, ...args], options)
+  }
+
+  private async enrichAppsMetadata(serial: string, apps: LaunchableApp[]): Promise<LaunchableApp[]> {
+    const enriched: LaunchableApp[] = []
+
+    for (const app of apps) {
+      enriched.push(await this.enrichAppMetadata(serial, app))
+    }
+
+    return enriched.sort((left, right) => left.displayName.localeCompare(right.displayName))
+  }
+
+  private async enrichAppMetadata(serial: string, app: LaunchableApp): Promise<LaunchableApp> {
+    let tempDir: string | null = null
+    let apkPath: string | null = null
+
+    try {
+      const remoteApkPath = await this.getRemoteApkPath(serial, app.packageName)
+
+      if (!remoteApkPath) {
+        return app
+      }
+
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'android-tv-remote-apk-'))
+      apkPath = path.join(tempDir, `${randomUUID()}.apk`)
+
+      await this.runRaw(['-s', serial, 'pull', remoteApkPath, apkPath], {
+        timeoutMs: 120_000
+      })
+
+      const apk = new Apk(apkPath)
+
+      try {
+        const [manifest, resources] = await Promise.all([apk.getManifestInfo(), apk.getResources()])
+        const displayName = this.resolveAppLabel(manifest.applicationLabel, resources) ?? app.displayName
+        const iconDataUrl = await this.resolveAppIconDataUrl(apk, manifest.applicationIcon, resources)
+
+        return {
+          ...app,
+          displayName,
+          iconDataUrl: iconDataUrl ?? app.iconDataUrl
+        }
+      } finally {
+        apk.close()
+      }
+    } catch {
+      return app
+    } finally {
+      if (tempDir) {
+        await fs.rm(tempDir, { recursive: true, force: true })
+      } else if (apkPath) {
+        await fs.rm(apkPath, { force: true })
+      }
+    }
+  }
+
+  private async getRemoteApkPath(serial: string, packageName: string): Promise<string | null> {
+    try {
+      const { stdout } = await this.runSerial(serial, ['shell', 'pm', 'path', packageName], {
+        timeoutMs: 10_000
+      })
+
+      const apkPaths = stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith('package:'))
+        .map((line) => line.slice('package:'.length))
+
+      return apkPaths.find((item) => item.endsWith('base.apk')) ?? apkPaths[0] ?? null
+    } catch {
+      return null
+    }
+  }
+
+  private resolveAppLabel(labelValue: string | number, resources: Resources): string | null {
+    if (typeof labelValue === 'string' && labelValue.trim()) {
+      return labelValue.trim()
+    }
+
+    if (typeof labelValue !== 'number') {
+      return null
+    }
+
+    const resource = this.pickBestStringResource(resources.resolve(labelValue))
+    return typeof resource?.value === 'string' && resource.value.trim() ? resource.value.trim() : null
+  }
+
+  private async resolveAppIconDataUrl(apk: ApkType, iconResourceId: number, resources: { resolve(id: number): Resource[] }): Promise<string | null> {
+    if (!iconResourceId) {
+      return null
+    }
+
+    const resource = this.pickBestIconResource(resources.resolve(iconResourceId))
+
+    if (!resource || typeof resource.value !== 'string') {
+      return null
+    }
+
+    const mimeType = this.getIconMimeType(resource.value)
+
+    if (!mimeType) {
+      return null
+    }
+
+    const iconBytes = await apk.extract(resource.value)
+    return `data:${mimeType};base64,${iconBytes.toString('base64')}`
+  }
+
+  private pickBestStringResource(resources: Resource[]): Resource | null {
+    const englishResource =
+      resources.find((resource) => typeof resource.value === 'string' && resource.locale?.language === 'en') ??
+      resources.find((resource) => typeof resource.value === 'string' && !resource.locale?.language) ??
+      resources.find((resource) => typeof resource.value === 'string')
+
+    return englishResource ?? null
+  }
+
+  private pickBestIconResource(resources: Resource[]): Resource | null {
+    const ranked = resources
+      .filter((resource) => typeof resource.value === 'string')
+      .sort((left, right) => this.rankIconPath(String(right.value)) - this.rankIconPath(String(left.value)))
+
+    return ranked[0] ?? null
+  }
+
+  private rankIconPath(resourcePath: string): number {
+    const normalized = resourcePath.toLowerCase()
+
+    if (normalized.endsWith('.png')) {
+      return 90 + this.rankIconDensity(normalized)
+    }
+
+    if (normalized.endsWith('.webp')) {
+      return 80 + this.rankIconDensity(normalized)
+    }
+
+    if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) {
+      return 70 + this.rankIconDensity(normalized)
+    }
+
+    return this.rankIconDensity(normalized)
+  }
+
+  private rankIconDensity(resourcePath: string): number {
+    if (resourcePath.includes('xxxhdpi')) return 60
+    if (resourcePath.includes('xxhdpi')) return 50
+    if (resourcePath.includes('xhdpi')) return 40
+    if (resourcePath.includes('hdpi')) return 30
+    if (resourcePath.includes('mdpi')) return 20
+    if (resourcePath.includes('drawable')) return 10
+    return 0
+  }
+
+  private getIconMimeType(resourcePath: string): string | null {
+    const normalized = resourcePath.toLowerCase()
+
+    if (normalized.endsWith('.png')) {
+      return 'image/png'
+    }
+
+    if (normalized.endsWith('.webp')) {
+      return 'image/webp'
+    }
+
+    if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) {
+      return 'image/jpeg'
+    }
+
+    return null
+  }
+
+  private async listAppsForCategory(
+    serial: string,
+    androidCategory: string,
+    category: 'leanback' | 'launcher'
+  ): Promise<LaunchableApp[]> {
+    let lastError: Error | null = null
+
+    for (const args of this.getCategoryQueryCommands(androidCategory)) {
+      try {
+        const { stdout } = await this.runSerial(serial, args, { timeoutMs: 12_000 })
+        return parseLaunchableApps(stdout, category)
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('App discovery failed.')
+      }
+    }
+
+    try {
+      return await this.listAppsByResolvingPackages(serial, androidCategory, category)
+    } catch (error) {
+      throw lastError ?? (error instanceof Error ? error : new Error('App discovery failed.'))
+    }
+  }
+
+  private getCategoryQueryCommands(androidCategory: string): string[][] {
+    return [
+      [
+        'shell',
+        'cmd',
+        'package',
+        'query-intent-activities',
+        '--brief',
+        '-a',
+        'android.intent.action.MAIN',
+        '-c',
+        androidCategory
+      ],
+      [
+        'shell',
+        'pm',
+        'query-intent-activities',
+        '--brief',
+        '-a',
+        'android.intent.action.MAIN',
+        '-c',
+        androidCategory
+      ]
+    ]
+  }
+
+  private async listAppsByResolvingPackages(
+    serial: string,
+    androidCategory: string,
+    category: 'leanback' | 'launcher'
+  ): Promise<LaunchableApp[]> {
+    const packages = await this.listInstalledPackages(serial)
+    const apps: LaunchableApp[] = []
+
+    for (const packageName of packages) {
+      const app = await this.resolveLaunchableActivity(serial, packageName, androidCategory, category)
+
+      if (app) {
+        apps.push(app)
+      }
+    }
+
+    return apps
+  }
+
+  private async listInstalledPackages(serial: string): Promise<string[]> {
+    const { stdout } = await this.runSerial(serial, ['shell', 'pm', 'list', 'packages'], { timeoutMs: 20_000 })
+
+    return stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('package:'))
+      .map((line) => line.slice('package:'.length))
+  }
+
+  private async resolveLaunchableActivity(
+    serial: string,
+    packageName: string,
+    androidCategory: string,
+    category: 'leanback' | 'launcher'
+  ): Promise<LaunchableApp | null> {
+    for (const args of [
+      [
+        'shell',
+        'cmd',
+        'package',
+        'resolve-activity',
+        '--brief',
+        '-a',
+        'android.intent.action.MAIN',
+        '-c',
+        androidCategory,
+        packageName
+      ],
+      [
+        'shell',
+        'pm',
+        'resolve-activity',
+        '--brief',
+        '-a',
+        'android.intent.action.MAIN',
+        '-c',
+        androidCategory,
+        packageName
+      ]
+    ]) {
+      try {
+        const { stdout } = await this.runSerial(serial, args, { timeoutMs: 5_000 })
+        return parseLaunchableApps(stdout, category)[0] ?? null
+      } catch {
+        // Some TVs expose only one of these shell entry points.
+      }
+    }
+
+    return null
   }
 
   private async runRaw(
