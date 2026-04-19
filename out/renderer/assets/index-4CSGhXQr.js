@@ -12655,7 +12655,7 @@ function applyDeviceToForm(device) {
   return {
     name: device.name,
     host: device.host,
-    preferredBackend: device.preferredBackend ?? (device.nativeRemote ? "auto" : "adb"),
+    preferredBackend: device.preferredBackend ?? "adb",
     nativeRemotePort: String(device.nativeRemote?.remotePort ?? 6466),
     nativePairingPort: String(device.nativeRemote?.pairingPort ?? 6467),
     nativeCode: "",
@@ -12683,6 +12683,54 @@ function feedbackTone(status) {
       return "danger";
   }
 }
+function getNativeSetupState(input) {
+  if (!input.hasSelectedTv) {
+    return {
+      badge: "Idle",
+      title: "Choose a TV first",
+      detail: "Native pairing stays off until you explicitly start it for a selected TV.",
+      tone: "neutral"
+    };
+  }
+  if (input.waitingForNativeCode) {
+    return {
+      badge: "Pairing",
+      title: "Waiting for the TV code",
+      detail: input.pendingNativePairing ? `${input.pendingNativePairing.name} is waiting for a native pairing code.` : "The TV should show a native pairing code before you confirm it here.",
+      tone: "warning"
+    };
+  }
+  if (input.isConnected && input.activeBackend === "native") {
+    return {
+      badge: "Connected",
+      title: "Native remote is connected",
+      detail: "This TV is currently using the saved native pairing.",
+      tone: "positive"
+    };
+  }
+  if (input.nativePaired) {
+    return {
+      badge: "Saved",
+      title: "Native pairing is saved",
+      detail: "Nothing will start automatically. Use the saved native pairing only when you want to test or use it.",
+      tone: "positive"
+    };
+  }
+  if (input.nativeLastError) {
+    return {
+      badge: "Failed",
+      title: "Native pairing needs attention",
+      detail: input.nativeLastError,
+      tone: "danger"
+    };
+  }
+  return {
+    badge: "Not paired",
+    title: "Native pairing is not saved yet",
+    detail: input.nativeLastConnectedAt ? `Last successful native session was ${formatTimestamp(input.nativeLastConnectedAt)}. Pair again only if you want to reuse it.` : "Nothing will start automatically. Start native pairing only if you want to try this optional path.",
+    tone: "neutral"
+  };
+}
 function App() {
   const [tab, setTab] = reactExports.useState("setup");
   const [diagnostics, setDiagnostics] = reactExports.useState(null);
@@ -12703,7 +12751,12 @@ function App() {
   const [pendingAppPackage, setPendingAppPackage] = reactExports.useState(null);
   const [pendingQuickActionId, setPendingQuickActionId] = reactExports.useState(null);
   const [cooldownTick, setCooldownTick] = reactExports.useState(Date.now());
+  const [foregroundAppState, setForegroundAppState] = reactExports.useState(diagnostics?.foregroundApp ?? null);
   const deferredAppsQuery = reactExports.useDeferredValue(appsQuery);
+  const diagnosticsRequestRef = reactExports.useRef(0);
+  const diagnosticsInFlightRef = reactExports.useRef(null);
+  const diagnosticsQueuedRef = reactExports.useRef(false);
+  const foregroundRequestRef = reactExports.useRef(0);
   const activeDevice = diagnostics?.activeDevice ?? null;
   const activeAppsCache = activeDevice?.cachedApps ?? null;
   const activeBackend = diagnostics?.activeBackend ?? null;
@@ -12711,7 +12764,7 @@ function App() {
   const health = diagnostics?.health ?? null;
   const recommendedActions = diagnostics?.recommendedActions ?? [];
   const quickActions = diagnostics?.quickActions ?? [];
-  const foregroundApp = diagnostics?.foregroundApp ?? null;
+  const foregroundApp = foregroundAppState ?? diagnostics?.foregroundApp ?? null;
   const capabilities = diagnostics?.capabilities ?? {
     adbFallback: false,
     typing: false,
@@ -12725,8 +12778,19 @@ function App() {
   const hasSelectedTv = Boolean(form.host.trim());
   const isConnected = connectionState.status === "connected";
   const activeMatchesForm = Boolean(activeDevice && form.host.trim() && activeDevice.host === form.host.trim());
-  const nativePaired = Boolean(activeMatchesForm && activeDevice?.nativeRemote?.certificate);
   const savedSelectedDevice = devices.find((device) => device.host === form.host.trim()) ?? null;
+  const setupDevice = savedSelectedDevice ?? (activeMatchesForm ? activeDevice : null);
+  const nativePaired = Boolean(setupDevice?.nativeRemote?.certificate);
+  const nativeSetupState = getNativeSetupState({
+    hasSelectedTv,
+    waitingForNativeCode,
+    pendingNativePairing,
+    isConnected,
+    activeBackend,
+    nativePaired,
+    nativeLastError: setupDevice?.backendHealth?.native.lastError,
+    nativeLastConnectedAt: setupDevice?.backendHealth?.native.lastConnectedAt
+  });
   const selectedHostLabel = activeDevice?.host ?? (form.host.trim() !== "" ? form.host.trim() : "Choose a TV in Setup to begin.");
   const preferredPathLabel = form.preferredBackend === "adb" ? "ADB" : form.preferredBackend === "native" ? "Native Remote" : "Auto";
   const recommendedAdbLabel = form.adbMode === "pair" ? "Pair ADB and connect" : "Connect with ADB";
@@ -12737,10 +12801,47 @@ function App() {
   const heroTitle = waitingForNativeCode ? "Finish native pairing or switch back to ADB" : health?.summary ?? (isConnected && activeDevice ? `Connected to ${activeDevice.name}` : "No TV connected yet");
   const heroDetail = waitingForNativeCode ? "If the TV never shows a pairing code, stop here and use ADB instead." : health?.detail ?? "Start with ADB unless you specifically want to try native remote.";
   async function refreshDiagnostics() {
-    const next = await window.tvRemoteApi.getDiagnostics();
-    setDiagnostics(next);
-    setDevices(next.savedDevices);
-    setConnectionState(next.connectionState);
+    if (diagnosticsInFlightRef.current) {
+      diagnosticsQueuedRef.current = true;
+      return diagnosticsInFlightRef.current;
+    }
+    const run = async () => {
+      do {
+        diagnosticsQueuedRef.current = false;
+        const requestId = ++diagnosticsRequestRef.current;
+        const next = await window.tvRemoteApi.getDiagnostics();
+        if (requestId !== diagnosticsRequestRef.current) {
+          continue;
+        }
+        setDiagnostics(next);
+        setDevices(next.savedDevices);
+        setConnectionState(next.connectionState);
+      } while (diagnosticsQueuedRef.current);
+    };
+    const promise = run().finally(() => {
+      diagnosticsInFlightRef.current = null;
+    });
+    diagnosticsInFlightRef.current = promise;
+    return promise;
+  }
+  async function refreshForegroundApp() {
+    if (connectionState.status !== "connected" || !activeDevice || !capabilities.apps) {
+      setForegroundAppState(null);
+      return;
+    }
+    const requestId = ++foregroundRequestRef.current;
+    try {
+      const next = await window.tvRemoteApi.getForegroundApp();
+      if (requestId !== foregroundRequestRef.current) {
+        return;
+      }
+      setForegroundAppState(next);
+    } catch {
+      if (requestId !== foregroundRequestRef.current) {
+        return;
+      }
+      setForegroundAppState(null);
+    }
   }
   reactExports.useEffect(() => {
     void refreshDiagnostics();
@@ -12821,6 +12922,18 @@ function App() {
     }, 500);
     return () => window.clearInterval(timer);
   }, [commandCooldowns]);
+  reactExports.useEffect(() => {
+    if (connectionState.status !== "connected" || !activeDevice || !capabilities.apps || tab !== "remote" && tab !== "apps") {
+      setForegroundAppState(null);
+      return;
+    }
+    setForegroundAppState(null);
+    void refreshForegroundApp();
+    const timer = window.setInterval(() => {
+      void refreshForegroundApp();
+    }, 6e3);
+    return () => window.clearInterval(timer);
+  }, [activeDevice?.id, capabilities.apps, connectionState.status, tab]);
   function createLocalFeedback(input) {
     return {
       id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -12919,7 +13032,7 @@ function App() {
       setBusy(null);
     }
   }
-  async function beginNativePairing(preferredBackendOverride = "native") {
+  async function beginNativePairing() {
     if (!form.host.trim()) {
       setStatusMessage("Choose or enter a TV host before starting native pairing.");
       return;
@@ -12932,13 +13045,12 @@ function App() {
         remotePort: Number(form.nativeRemotePort),
         pairingPort: Number(form.nativePairingPort),
         serviceLabel: form.name.trim() || form.host.trim(),
-        preferredBackend: preferredBackendOverride,
+        preferredBackend: form.preferredBackend,
         adbEnabled: form.adbEnabled,
         connectPort: Number(form.connectPort),
         pairPort: form.adbMode === "pair" ? Number(form.adbPairPort) : void 0,
         mode: form.adbMode
       });
-      setForm((current) => ({ ...current, preferredBackend: preferredBackendOverride }));
       setStatusMessage(state.message ?? "Native pairing started.");
       await refreshDiagnostics();
       setTab(state.status === "connected" ? "remote" : "setup");
@@ -13206,7 +13318,7 @@ function App() {
         break;
       case "retry_native":
         setTab("setup");
-        await beginNativePairing("native");
+        await beginNativePairing();
         break;
       case "open_remote":
         setTab("remote");
@@ -13258,11 +13370,11 @@ function App() {
       ] })
     ] });
   }
-  function renderNativePairingPanel(className) {
+  function renderNativePairingPanel() {
     if (!waitingForNativeCode) {
       return null;
     }
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: `panel pairing-panel ${className}`.trim(), children: [
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "activity-panel pairing-panel", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "section-header", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Native Pairing" }),
@@ -13493,8 +13605,7 @@ function App() {
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: action.detail })
           ] }, action.id)) }) : null
         ] })
-      ] }),
-      renderNativePairingPanel("sidebar-pairing")
+      ] })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: "app-main", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "panel status-strip hero-panel", children: [
@@ -13861,7 +13972,21 @@ function App() {
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "section-chip section-chip-muted", children: "Less reliable" })
             ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted", children: "This is the Google TV style path. On some TVs it works well, and on others the pairing prompt is inconsistent. If the TV does not show a code, stop and use ADB instead." }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted", children: "This path is fully manual now. It does not start during a normal connect, and it should stay secondary to ADB." }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "activity-panel native-setup-panel", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "section-header compact-header", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "Native status" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: nativeSetupState.title })
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `status-pill tone-${nativeSetupState.tone}`, children: nativeSetupState.badge })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted", children: nativeSetupState.detail }),
+              setupDevice?.backendHealth?.native.lastConnectedAt ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "muted", children: [
+                "Last successful native session: ",
+                formatTimestamp(setupDevice.backendHealth.native.lastConnectedAt)
+              ] }) : null
+            ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field-row", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
                 "Native remote port",
@@ -13886,14 +14011,15 @@ function App() {
                 )
               ] })
             ] }),
+            renderNativePairingPanel(),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "action-row", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "button",
                 {
                   className: "primary-button",
                   type: "button",
-                  onClick: () => void beginNativePairing("native"),
-                  disabled: busy === "native-pair" || !hasSelectedTv,
+                  onClick: () => void beginNativePairing(),
+                  disabled: busy === "native-pair" || !hasSelectedTv || waitingForNativeCode,
                   children: nativePaired ? "Pair native again" : "Start native pairing"
                 }
               ),
@@ -13916,7 +14042,8 @@ function App() {
                   children: "Make native the default"
                 }
               )
-            ] })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted", children: "Start pairing only when you want to try native. If the TV does not show a code or never accepts it, cancel and go back to ADB." })
           ] })
         ] })
       ] }),

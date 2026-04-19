@@ -37,6 +37,7 @@ export function registerIpc(options: RegisterIpcOptions): void {
     adbClient,
     getMainWindow
   } = options
+  let cachedAdbVersion: string | undefined
 
   ipcMain.handle(IPC_CHANNELS.devicesList, () => deviceManager.listDevices())
 
@@ -78,13 +79,12 @@ export function registerIpc(options: RegisterIpcOptions): void {
 
   ipcMain.handle(IPC_CHANNELS.diagnosticsGetStatus, async () => {
     const adbInfo = await adbLocator.locate()
-    const version = adbInfo.available ? await adbClient.version() : undefined
+    const version =
+      adbInfo.available
+        ? (cachedAdbVersion ??= await adbClient.version())
+        : undefined
     const health = await deviceManager.getHealth(adbInfo.available)
-    const foregroundApp =
-      adbInfo.available && deviceManager.getConnectionState().status === 'connected'
-        ? await appController.getForegroundApp().catch(() => null)
-        : null
-    const quickActions = actionController.listQuickActions(health, foregroundApp)
+    const quickActions = actionController.listQuickActions(health, null)
 
     return {
       adb: {
@@ -101,7 +101,7 @@ export function registerIpc(options: RegisterIpcOptions): void {
       capabilities: deviceManager.getCapabilities(),
       health,
       recommendedActions: health?.recommendedActions ?? [],
-      foregroundApp,
+      foregroundApp: null,
       quickActions
     }
   })

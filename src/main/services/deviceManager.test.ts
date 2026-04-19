@@ -107,7 +107,8 @@ describe('DeviceManager', () => {
       preferredBackend: 'auto',
       nativeRemote: {
         remotePort: 6466,
-        pairingPort: 6467
+        pairingPort: 6467,
+        certificate: { key: 'native-key', cert: 'native-cert' }
       },
       adbEnabled: true,
       connectPort: 5555
@@ -141,7 +142,8 @@ describe('DeviceManager', () => {
       preferredBackend: 'auto',
       nativeRemote: {
         remotePort: 6466,
-        pairingPort: 6467
+        pairingPort: 6467,
+        certificate: { key: 'native-key', cert: 'native-cert' }
       },
       adbEnabled: true,
       connectPort: 5555
@@ -151,6 +153,95 @@ describe('DeviceManager', () => {
     expect(manager.getActiveBackend()).toBe('adb')
     expect(manager.getActiveDevice()?.backendHealth?.native.lastError).toContain('Native remote timed out')
     expect(adbClient.connect).toHaveBeenCalledTimes(1)
+    manager.dispose()
+  })
+
+  it('does not auto-start native pairing during a normal connect without a saved certificate', async () => {
+    const nativeService = createNativeRemoteService({
+      connect: vi.fn()
+    })
+
+    const adbClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-unpaired-native' })
+    } as unknown as AdbClient
+
+    const manager = new DeviceManager(createStore(), adbClient, nativeService)
+    await manager.init()
+
+    const state = await manager.connectDevice({
+      id: 'tv-unpaired-native',
+      name: 'Den TV',
+      host: '192.168.1.11',
+      preferredBackend: 'auto',
+      nativeRemote: {
+        remotePort: 6466,
+        pairingPort: 6467
+      },
+      adbEnabled: true,
+      connectPort: 5555
+    })
+
+    expect(state.backend).toBe('adb')
+    expect(adbClient.connect).toHaveBeenCalledTimes(1)
+    expect(nativeService.connect).not.toHaveBeenCalled()
+    manager.dispose()
+  })
+
+  it('does not block init on reconnecting a saved device', async () => {
+    let resolveConnect!: (value: { status: 'connected'; certificate: { key: string; cert: string } }) => void
+    const nativeService = createNativeRemoteService({
+      connect: vi.fn().mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveConnect = resolve
+          })
+      )
+    })
+
+    const adbClient = {
+      connect: vi.fn(),
+      getConnectionState: vi.fn()
+    } as unknown as AdbClient
+
+    const manager = new DeviceManager(
+      createStore({
+        savedDevices: [
+          {
+            id: 'tv-startup',
+            name: 'Startup TV',
+            host: '192.168.1.30',
+            connectPort: 5555,
+            preferredBackend: 'native',
+            adbEnabled: true,
+            nativeRemote: {
+              remotePort: 6466,
+              pairingPort: 6467,
+              certificate: { key: 'startup-key', cert: 'startup-cert' }
+            }
+          }
+        ],
+        activeDeviceId: 'tv-startup'
+      }),
+      adbClient,
+      nativeService
+    )
+
+    const initResult = await Promise.race([
+      manager.init().then(() => 'resolved'),
+      new Promise<'timed_out'>((resolve) => setTimeout(() => resolve('timed_out'), 50))
+    ])
+
+    expect(initResult).toBe('resolved')
+
+    await Promise.resolve()
+    expect(nativeService.connect).toHaveBeenCalledTimes(1)
+
+    resolveConnect({
+      status: 'connected',
+      certificate: { key: 'startup-key', cert: 'startup-cert' }
+    })
+
     manager.dispose()
   })
 

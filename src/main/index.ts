@@ -13,6 +13,7 @@ import { NativeRemoteService } from './services/native/nativeRemoteService'
 
 let mainWindow: BrowserWindow | null = null
 let deviceManager: DeviceManager | null = null
+let bootstrapPromise: Promise<void> | null = null
 
 function resolvePreloadPath(): string {
   const candidates = [
@@ -77,7 +78,6 @@ async function bootstrap(): Promise<void> {
   const store = new ElectronDeviceStore()
   const nativeRemoteService = new NativeRemoteService()
   deviceManager = new DeviceManager(store, adbClient, nativeRemoteService)
-  await deviceManager.init()
 
   const remoteController = new RemoteController(deviceManager, adbClient, nativeRemoteService)
   const appController = new AppController(deviceManager, adbClient)
@@ -94,16 +94,38 @@ async function bootstrap(): Promise<void> {
   })
 
   await createMainWindow()
+
+  void deviceManager.init().catch((error) => {
+    console.error('Device manager init failed, continuing with empty runtime state.', error)
+  })
+}
+
+function ensureBootstrapped(): Promise<void> {
+  if (bootstrapPromise) {
+    return bootstrapPromise
+  }
+
+  bootstrapPromise = bootstrap().catch((error) => {
+    console.error('Application bootstrap failed.', error)
+    bootstrapPromise = null
+    throw error
+  })
+
+  return bootstrapPromise
 }
 
 app.whenReady().then(() => {
-  void bootstrap()
+  void ensureBootstrapped()
 })
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    void createMainWindow()
-  }
+  void ensureBootstrapped().then(() => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      void createMainWindow()
+    }
+  }).catch((error) => {
+    console.error('Could not restore application window.', error)
+  })
 })
 
 app.on('window-all-closed', () => {

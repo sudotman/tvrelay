@@ -28,8 +28,16 @@ type DeviceManagerEvents = {
 
 const RECENT_APPS_LIMIT = 8
 
-function canUseNative(device: SavedDevice): boolean {
+function hasNativeProfile(device: SavedDevice): boolean {
   return Boolean(device.nativeRemote)
+}
+
+function hasNativeCertificate(device: SavedDevice): boolean {
+  return Boolean(device.nativeRemote?.certificate?.key && device.nativeRemote?.certificate?.cert)
+}
+
+function canConnectViaNative(device: SavedDevice): boolean {
+  return hasNativeProfile(device) && hasNativeCertificate(device)
 }
 
 function canUseAdb(device: SavedDevice): boolean {
@@ -38,16 +46,34 @@ function canUseAdb(device: SavedDevice): boolean {
 
 function getBackendOrder(device: SavedDevice): ConnectionBackend[] {
   const preferred = device.preferredBackend ?? 'adb'
+  const nativeReady = canConnectViaNative(device)
+  const adbReady = canUseAdb(device)
 
   if (preferred === 'native') {
-    return ['native']
+    if (nativeReady) {
+      return ['native']
+    }
+
+    return adbReady ? ['adb'] : ['native']
   }
 
   if (preferred === 'adb') {
     return ['adb']
   }
 
-  return ['native', 'adb']
+  if (nativeReady && adbReady) {
+    return ['native', 'adb']
+  }
+
+  if (nativeReady) {
+    return ['native']
+  }
+
+  if (adbReady) {
+    return ['adb']
+  }
+
+  return ['native']
 }
 
 function createBackendHealthSnapshot(overrides?: Partial<BackendHealthSnapshot>): BackendHealthSnapshot {
@@ -106,7 +132,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
       if (activeDevice) {
         this.updateBackendHealth(activeDevice.id, 'native', {
-          available: canUseNative(activeDevice),
+          available: hasNativeProfile(activeDevice),
           ready: false,
           lastState: 'error',
           lastError: message
@@ -123,13 +149,24 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     this.emitDevicesChanged()
 
-    if (this.getActiveDevice()) {
-      await this.attemptReconnect()
-    }
-
     this.healthCheckTimer = setInterval(() => {
       void this.performHealthCheck()
     }, 7_000)
+
+    if (this.getActiveDevice()) {
+      queueMicrotask(() => {
+        void this.attemptReconnect().catch((error) => {
+          const activeDevice = this.getActiveDevice()
+
+          this.activeBackend = null
+          this.updateConnectionState({
+            status: 'error',
+            deviceId: activeDevice?.id,
+            message: error instanceof Error ? error.message : 'Reconnect failed.'
+          })
+        })
+      })
+    }
   }
 
   dispose(): void {
@@ -163,13 +200,19 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
   getCapabilities() {
     const activeDevice = this.getActiveDevice()
-    const adbEnabled = Boolean(activeDevice && canUseAdb(activeDevice))
+    const adbReady = Boolean(
+      activeDevice &&
+        canUseAdb(activeDevice) &&
+        (this.activeBackend === 'adb'
+          ? this.connectionState.status === 'connected'
+          : activeDevice.backendHealth?.adb.ready)
+    )
 
     return {
-      nativeRemote: Boolean(activeDevice && canUseNative(activeDevice)),
-      adbFallback: adbEnabled,
-      typing: this.activeBackend === 'adb' || adbEnabled,
-      apps: this.activeBackend === 'adb' || adbEnabled
+      nativeRemote: Boolean(activeDevice && canConnectViaNative(activeDevice)),
+      adbFallback: adbReady,
+      typing: this.activeBackend === 'adb' || adbReady,
+      apps: this.activeBackend === 'adb' || adbReady
     }
   }
 
@@ -292,10 +335,10 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     if (this.getPendingNativePairing()?.deviceId === activeDevice.id) {
       this.updateBackendHealth(activeDevice.id, 'native', {
-        available: canUseNative(activeDevice),
-        ready: false,
-        lastState: 'pairing',
-        lastError: 'Native pairing is still waiting for a code from the TV.'
+          available: hasNativeProfile(activeDevice),
+          ready: false,
+          lastState: 'pairing',
+          lastError: 'Native pairing is still waiting for a code from the TV.'
       })
       return this.getHealth(adbAvailable)
     }
@@ -397,7 +440,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     const pendingNativePairing = this.nativeRemoteService.getPendingPairing()
     const shouldTearDownSession =
-      this.activeDeviceId === deviceId || pendingNativePairing?.id === deviceId
+      this.activeDeviceId === deviceId || pendingNativePairing?.deviceId === deviceId
 
     if (shouldTearDownSession) {
       if (this.activeBackend === 'native' || pendingNativePairing) {
@@ -501,11 +544,11 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     this.activeDeviceId = saved.id
     this.persist()
-    this.updateBackendHealth(saved.id, 'native', {
-      available: true,
-      ready: false,
-      lastState: 'pairing',
-      lastError: 'Waiting for the TV to show a pairing code.'
+      this.updateBackendHealth(saved.id, 'native', {
+        available: true,
+        ready: false,
+        lastState: 'pairing',
+        lastError: 'Waiting for the TV to show a pairing code.'
     })
 
     this.updateConnectionState({
@@ -515,14 +558,32 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       message: `Start the pairing prompt on ${saved.name}, then enter the code shown on the TV.`
     })
 
-    const result = await this.nativeRemoteService.connect(saved)
+    try {
+      const result = await this.nativeRemoteService.connect(saved)
 
-    if (result.status === 'pairing') {
+      if (result.status === 'pairing') {
+        this.activeBackend = null
+        return this.connectionState
+      }
+
+      return this.finalizeNativeConnection(saved, result.certificate)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not start native pairing.'
       this.activeBackend = null
-      return this.connectionState
+      this.updateBackendHealth(saved.id, 'native', {
+        available: true,
+        ready: false,
+        lastState: 'error',
+        lastError: message
+      })
+      this.updateConnectionState({
+        status: 'error',
+        backend: 'native',
+        deviceId: saved.id,
+        message
+      })
+      throw error
     }
-
-    return this.finalizeNativeConnection(saved, result.certificate)
   }
 
   async completeNativePairing(code: string): Promise<ConnectionState> {
@@ -532,8 +593,26 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       throw new Error('No TV is currently waiting for a native remote pairing code.')
     }
 
-    const certificate = await this.nativeRemoteService.completePairing(code)
-    return this.finalizeNativeConnection(activeDevice, certificate)
+    try {
+      const certificate = await this.nativeRemoteService.completePairing(code)
+      return this.finalizeNativeConnection(activeDevice, certificate)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Native pairing confirmation failed.'
+      this.activeBackend = null
+      this.updateBackendHealth(activeDevice.id, 'native', {
+        available: hasNativeProfile(activeDevice),
+        ready: false,
+        lastState: 'error',
+        lastError: message
+      })
+      this.updateConnectionState({
+        status: 'error',
+        backend: 'native',
+        deviceId: activeDevice.id,
+        message
+      })
+      throw error
+    }
   }
 
   async pairAndConnect(input: PairDeviceInput): Promise<ConnectionState> {
@@ -607,7 +686,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     let nativeError: Error | null = null
 
     for (const backend of getBackendOrder(baseDevice)) {
-      if (backend === 'native' && canUseNative(baseDevice)) {
+      if (backend === 'native' && canConnectViaNative(baseDevice)) {
         try {
           const result = await this.connectViaNative(baseDevice)
 
@@ -669,7 +748,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     if (activeDevice && this.activeBackend) {
       this.updateBackendHealth(activeDevice.id, this.activeBackend, {
-        available: this.activeBackend === 'adb' ? canUseAdb(activeDevice) : canUseNative(activeDevice),
+        available: this.activeBackend === 'adb' ? canUseAdb(activeDevice) : hasNativeProfile(activeDevice),
         ready: false,
         lastState: 'disconnected'
       })
@@ -818,8 +897,26 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       throw new Error('This TV is using native remote only. Enable ADB fallback in Setup to unlock typing and installed-app launching.')
     }
 
-    await this.adbClient.connect(activeDevice.host, activeDevice.connectPort)
-    const state = await this.adbClient.getConnectionState(activeDevice)
+    const initialState = await this.adbClient.getConnectionState(activeDevice)
+
+    if (initialState.status === 'unauthorized') {
+      this.updateBackendHealth(activeDevice.id, 'adb', {
+        available: true,
+        ready: false,
+        lastState: 'unauthorized',
+        lastError: initialState.message
+      })
+      throw new Error(initialState.message ?? 'Authorize this computer in the TV wireless debugging prompt first.')
+    }
+
+    if (initialState.status !== 'connected') {
+      await this.adbClient.connect(activeDevice.host, activeDevice.connectPort)
+    }
+
+    const state =
+      initialState.status === 'connected'
+        ? initialState
+        : await this.adbClient.getConnectionState(activeDevice)
 
     if (state.status !== 'connected') {
       this.updateBackendHealth(activeDevice.id, 'adb', {
@@ -940,7 +1037,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       }),
       native: createBackendHealthSnapshot({
         ...saved.backendHealth?.native,
-        available: canUseNative(saved),
+        available: hasNativeProfile(saved),
         ready: false,
         lastCheckedAt: now,
         lastState: saved.backendHealth?.native.lastState ?? 'disconnected',
@@ -1089,7 +1186,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   private resolveNativeHealth(device: SavedDevice): BackendHealthSnapshot {
     const saved = createBackendHealthSnapshot(device.backendHealth?.native)
 
-    if (!canUseNative(device)) {
+    if (!hasNativeProfile(device)) {
       return createBackendHealthSnapshot({
         ...saved,
         available: false,
@@ -1134,7 +1231,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       connectPort: input.connectPort ?? 5555,
       pairPort: input.pairPort,
       mode: input.mode ?? 'connect',
-      preferredBackend: input.preferredBackend ?? (nativeRemote ? 'auto' : 'adb'),
+      preferredBackend: input.preferredBackend ?? 'adb',
       adbEnabled,
       nativeRemote,
       lastConnectedAt: input.lastConnectedAt,
@@ -1155,7 +1252,11 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     }
   }
 
-  private replaceDevice(deviceId: string, patch: Partial<SavedDevice>): SavedDevice {
+  private replaceDevice(
+    deviceId: string,
+    patch: Partial<SavedDevice>,
+    options?: { emitDevicesChanged?: boolean }
+  ): SavedDevice {
     const existing = this.savedDevices.find((item) => item.id === deviceId)
 
     if (!existing) {
@@ -1169,7 +1270,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     this.savedDevices = this.savedDevices.map((item) => (item.id === deviceId ? updated : item))
     this.persist()
-    this.emitDevicesChanged()
+    if (options?.emitDevicesChanged !== false) {
+      this.emitDevicesChanged()
+    }
     return updated
   }
 
@@ -1194,13 +1297,17 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       lastCheckedAt: patch.lastCheckedAt ?? new Date().toISOString()
     })
 
-    return this.replaceDevice(deviceId, {
+    return this.replaceDevice(
+      deviceId,
+      {
       backendHealth: {
         adb: backend === 'adb' ? nextSnapshot : createBackendHealthSnapshot(existing.backendHealth?.adb),
         native:
           backend === 'native' ? nextSnapshot : createBackendHealthSnapshot(existing.backendHealth?.native)
       }
-    })
+      },
+      { emitDevicesChanged: false }
+    )
   }
 
   private updateConnectionState(nextState: ConnectionState): void {

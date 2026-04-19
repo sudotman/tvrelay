@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useState } from 'react'
+import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import type {
   ActionFeedback,
   ConnectionBackend,
@@ -126,7 +126,7 @@ function applyDeviceToForm(device: SavedDevice): SetupFormState {
   return {
     name: device.name,
     host: device.host,
-    preferredBackend: device.preferredBackend ?? (device.nativeRemote ? 'auto' : 'adb'),
+    preferredBackend: device.preferredBackend ?? 'adb',
     nativeRemotePort: String(device.nativeRemote?.remotePort ?? 6466),
     nativePairingPort: String(device.nativeRemote?.pairingPort ?? 6467),
     nativeCode: '',
@@ -158,6 +158,79 @@ function feedbackTone(status: ActionFeedback['status']): 'neutral' | 'positive' 
   }
 }
 
+function getNativeSetupState(input: {
+  hasSelectedTv: boolean
+  waitingForNativeCode: boolean
+  pendingNativePairing: DiagnosticsStatus['pendingNativePairing']
+  isConnected: boolean
+  activeBackend: ConnectionBackend | null
+  nativePaired: boolean
+  nativeLastError?: string
+  nativeLastConnectedAt?: string
+}): {
+  badge: string
+  title: string
+  detail: string
+  tone: 'neutral' | 'positive' | 'warning' | 'danger'
+} {
+  if (!input.hasSelectedTv) {
+    return {
+      badge: 'Idle',
+      title: 'Choose a TV first',
+      detail: 'Native pairing stays off until you explicitly start it for a selected TV.',
+      tone: 'neutral'
+    }
+  }
+
+  if (input.waitingForNativeCode) {
+    return {
+      badge: 'Pairing',
+      title: 'Waiting for the TV code',
+      detail: input.pendingNativePairing
+        ? `${input.pendingNativePairing.name} is waiting for a native pairing code.`
+        : 'The TV should show a native pairing code before you confirm it here.',
+      tone: 'warning'
+    }
+  }
+
+  if (input.isConnected && input.activeBackend === 'native') {
+    return {
+      badge: 'Connected',
+      title: 'Native remote is connected',
+      detail: 'This TV is currently using the saved native pairing.',
+      tone: 'positive'
+    }
+  }
+
+  if (input.nativePaired) {
+    return {
+      badge: 'Saved',
+      title: 'Native pairing is saved',
+      detail: 'Nothing will start automatically. Use the saved native pairing only when you want to test or use it.',
+      tone: 'positive'
+    }
+  }
+
+  if (input.nativeLastError) {
+    return {
+      badge: 'Failed',
+      title: 'Native pairing needs attention',
+      detail: input.nativeLastError,
+      tone: 'danger'
+    }
+  }
+
+  return {
+    badge: 'Not paired',
+    title: 'Native pairing is not saved yet',
+    detail:
+      input.nativeLastConnectedAt
+        ? `Last successful native session was ${formatTimestamp(input.nativeLastConnectedAt)}. Pair again only if you want to reuse it.`
+        : 'Nothing will start automatically. Start native pairing only if you want to try this optional path.',
+    tone: 'neutral'
+  }
+}
+
 export function App() {
   const [tab, setTab] = useState<TabId>('setup')
   const [diagnostics, setDiagnostics] = useState<DiagnosticsStatus | null>(null)
@@ -178,7 +251,12 @@ export function App() {
   const [pendingAppPackage, setPendingAppPackage] = useState<string | null>(null)
   const [pendingQuickActionId, setPendingQuickActionId] = useState<string | null>(null)
   const [cooldownTick, setCooldownTick] = useState(Date.now())
+  const [foregroundAppState, setForegroundAppState] = useState(diagnostics?.foregroundApp ?? null)
   const deferredAppsQuery = useDeferredValue(appsQuery)
+  const diagnosticsRequestRef = useRef(0)
+  const diagnosticsInFlightRef = useRef<Promise<void> | null>(null)
+  const diagnosticsQueuedRef = useRef(false)
+  const foregroundRequestRef = useRef(0)
 
   const activeDevice = diagnostics?.activeDevice ?? null
   const activeAppsCache = activeDevice?.cachedApps ?? null
@@ -187,7 +265,7 @@ export function App() {
   const health = diagnostics?.health ?? null
   const recommendedActions = diagnostics?.recommendedActions ?? []
   const quickActions = diagnostics?.quickActions ?? []
-  const foregroundApp = diagnostics?.foregroundApp ?? null
+  const foregroundApp = foregroundAppState ?? diagnostics?.foregroundApp ?? null
   const capabilities = diagnostics?.capabilities ?? {
     nativeRemote: false,
     adbFallback: false,
@@ -202,8 +280,19 @@ export function App() {
   const hasSelectedTv = Boolean(form.host.trim())
   const isConnected = connectionState.status === 'connected'
   const activeMatchesForm = Boolean(activeDevice && form.host.trim() && activeDevice.host === form.host.trim())
-  const nativePaired = Boolean(activeMatchesForm && activeDevice?.nativeRemote?.certificate)
   const savedSelectedDevice = devices.find((device) => device.host === form.host.trim()) ?? null
+  const setupDevice = savedSelectedDevice ?? (activeMatchesForm ? activeDevice : null)
+  const nativePaired = Boolean(setupDevice?.nativeRemote?.certificate)
+  const nativeSetupState = getNativeSetupState({
+    hasSelectedTv,
+    waitingForNativeCode,
+    pendingNativePairing,
+    isConnected,
+    activeBackend,
+    nativePaired,
+    nativeLastError: setupDevice?.backendHealth?.native.lastError,
+    nativeLastConnectedAt: setupDevice?.backendHealth?.native.lastConnectedAt
+  })
   const selectedHostLabel =
     activeDevice?.host ?? (form.host.trim() !== '' ? form.host.trim() : 'Choose a TV in Setup to begin.')
   const preferredPathLabel =
@@ -223,10 +312,55 @@ export function App() {
     : health?.detail ?? 'Start with ADB unless you specifically want to try native remote.'
 
   async function refreshDiagnostics(): Promise<void> {
-    const next = await window.tvRemoteApi.getDiagnostics()
-    setDiagnostics(next)
-    setDevices(next.savedDevices)
-    setConnectionState(next.connectionState)
+    if (diagnosticsInFlightRef.current) {
+      diagnosticsQueuedRef.current = true
+      return diagnosticsInFlightRef.current
+    }
+
+    const run = async () => {
+      do {
+        diagnosticsQueuedRef.current = false
+        const requestId = ++diagnosticsRequestRef.current
+        const next = await window.tvRemoteApi.getDiagnostics()
+
+        if (requestId !== diagnosticsRequestRef.current) {
+          continue
+        }
+
+        setDiagnostics(next)
+        setDevices(next.savedDevices)
+        setConnectionState(next.connectionState)
+      } while (diagnosticsQueuedRef.current)
+    }
+
+    const promise = run().finally(() => {
+      diagnosticsInFlightRef.current = null
+    })
+
+    diagnosticsInFlightRef.current = promise
+    return promise
+  }
+
+  async function refreshForegroundApp(): Promise<void> {
+    if (connectionState.status !== 'connected' || !activeDevice || !capabilities.apps) {
+      setForegroundAppState(null)
+      return
+    }
+
+    const requestId = ++foregroundRequestRef.current
+
+    try {
+      const next = await window.tvRemoteApi.getForegroundApp()
+      if (requestId !== foregroundRequestRef.current) {
+        return
+      }
+      setForegroundAppState(next)
+    } catch {
+      if (requestId !== foregroundRequestRef.current) {
+        return
+      }
+      setForegroundAppState(null)
+    }
   }
 
   useEffect(() => {
@@ -327,6 +461,26 @@ export function App() {
 
     return () => window.clearInterval(timer)
   }, [commandCooldowns])
+
+  useEffect(() => {
+    if (
+      connectionState.status !== 'connected' ||
+      !activeDevice ||
+      !capabilities.apps ||
+      (tab !== 'remote' && tab !== 'apps')
+    ) {
+      setForegroundAppState(null)
+      return
+    }
+
+    setForegroundAppState(null)
+    void refreshForegroundApp()
+    const timer = window.setInterval(() => {
+      void refreshForegroundApp()
+    }, 6000)
+
+    return () => window.clearInterval(timer)
+  }, [activeDevice?.id, capabilities.apps, connectionState.status, tab])
 
   function createLocalFeedback(input: Omit<ActionFeedback, 'id' | 'createdAt'>): ActionFeedback {
     return {
@@ -446,9 +600,7 @@ export function App() {
     }
   }
 
-  async function beginNativePairing(
-    preferredBackendOverride: PreferredConnectionBackend = 'native'
-  ): Promise<void> {
+  async function beginNativePairing(): Promise<void> {
     if (!form.host.trim()) {
       setStatusMessage('Choose or enter a TV host before starting native pairing.')
       return
@@ -462,14 +614,13 @@ export function App() {
         remotePort: Number(form.nativeRemotePort),
         pairingPort: Number(form.nativePairingPort),
         serviceLabel: form.name.trim() || form.host.trim(),
-        preferredBackend: preferredBackendOverride,
+        preferredBackend: form.preferredBackend,
         adbEnabled: form.adbEnabled,
         connectPort: Number(form.connectPort),
         pairPort: form.adbMode === 'pair' ? Number(form.adbPairPort) : undefined,
         mode: form.adbMode
       })
 
-      setForm((current) => ({ ...current, preferredBackend: preferredBackendOverride }))
       setStatusMessage(state.message ?? 'Native pairing started.')
       await refreshDiagnostics()
       setTab(state.status === 'connected' ? 'remote' : 'setup')
@@ -776,7 +927,7 @@ export function App() {
         break
       case 'retry_native':
         setTab('setup')
-        await beginNativePairing('native')
+        await beginNativePairing()
         break
       case 'open_remote':
         setTab('remote')
@@ -842,13 +993,13 @@ export function App() {
     )
   }
 
-  function renderNativePairingPanel(className?: string) {
+  function renderNativePairingPanel() {
     if (!waitingForNativeCode) {
       return null
     }
 
     return (
-      <section className={`panel pairing-panel ${className ?? ''}`.trim()}>
+      <section className="activity-panel pairing-panel">
         <div className="section-header">
           <div>
             <p className="eyebrow">Native Pairing</p>
@@ -1120,7 +1271,6 @@ export function App() {
           </div>
         </section>
 
-        {renderNativePairingPanel('sidebar-pairing')}
       </aside>
 
       <main className="app-main">
@@ -1491,9 +1641,24 @@ export function App() {
                   <span className="section-chip section-chip-muted">Less reliable</span>
                 </div>
                 <p className="muted">
-                  This is the Google TV style path. On some TVs it works well, and on others the pairing prompt is inconsistent.
-                  If the TV does not show a code, stop and use ADB instead.
+                  This path is fully manual now. It does not start during a normal connect, and it should stay secondary to ADB.
                 </p>
+
+                <div className="activity-panel native-setup-panel">
+                  <div className="section-header compact-header">
+                    <div>
+                      <span className="focus-label">Native status</span>
+                      <h3>{nativeSetupState.title}</h3>
+                    </div>
+                    <div className={`status-pill tone-${nativeSetupState.tone}`}>{nativeSetupState.badge}</div>
+                  </div>
+                  <p className="muted">{nativeSetupState.detail}</p>
+                  {setupDevice?.backendHealth?.native.lastConnectedAt ? (
+                    <span className="muted">
+                      Last successful native session: {formatTimestamp(setupDevice.backendHealth.native.lastConnectedAt)}
+                    </span>
+                  ) : null}
+                </div>
 
                 <div className="field-row">
                   <label>
@@ -1516,12 +1681,14 @@ export function App() {
                   </label>
                 </div>
 
+                {renderNativePairingPanel()}
+
                 <div className="action-row">
                   <button
                     className="primary-button"
                     type="button"
-                    onClick={() => void beginNativePairing('native')}
-                    disabled={busy === 'native-pair' || !hasSelectedTv}
+                    onClick={() => void beginNativePairing()}
+                    disabled={busy === 'native-pair' || !hasSelectedTv || waitingForNativeCode}
                   >
                     {nativePaired ? 'Pair native again' : 'Start native pairing'}
                   </button>
@@ -1541,6 +1708,11 @@ export function App() {
                     Make native the default
                   </button>
                 </div>
+
+                <p className="muted">
+                  Start pairing only when you want to try native. If the TV does not show a code or never accepts it, cancel
+                  and go back to ADB.
+                </p>
               </section>
             </div>
           </section>

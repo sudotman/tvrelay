@@ -14,6 +14,9 @@ function createDeviceManager(overrides?: Partial<DeviceManager>): DeviceManager 
       mode: 'connect'
     }),
     getActiveBackend: vi.fn().mockReturnValue('adb'),
+    withAdbAccess: vi.fn().mockImplementation(async <T>(callback: (serial: string) => Promise<T>) =>
+      callback('192.168.29.158:5555')
+    ),
     ...overrides
   } as unknown as DeviceManager
 }

@@ -4,11 +4,14 @@ import { AndroidRemote, RemoteDirection } from 'androidtv-remote'
 import type {
   DiscoveredNativeDevice,
   NativeRemoteCertificate,
+  PendingNativePairing,
   SavedDevice
 } from '@shared/types'
 
 const CLIENT_NAME = 'Android TV Remote Desktop'
 const DISCOVERY_TIMEOUT_MS = 4_000
+const CONNECT_TIMEOUT_MS = 10_000
+const PAIRING_CONFIRM_TIMEOUT_MS = 15_000
 const DISCOVERY_SERVICE_TYPES = ['androidtvremote2', 'androidtvremote'] as const
 
 export interface NativeRemoteConnectResult {
@@ -92,8 +95,14 @@ export class NativeRemoteService extends EventEmitter<NativeRemoteServiceEvents>
 
     return new Promise((resolve, reject) => {
       let settled = false
+      const timeout = setTimeout(() => {
+        onError(
+          new Error('Timed out waiting for native remote. If the TV never shows a code, cancel this and use ADB instead.')
+        )
+      }, CONNECT_TIMEOUT_MS)
 
       const cleanup = () => {
+        clearTimeout(timeout)
         client.removeListener('ready', onReady)
         client.removeListener('secret', onSecret)
         client.removeListener('error', onError)
@@ -173,7 +182,12 @@ export class NativeRemoteService extends EventEmitter<NativeRemoteServiceEvents>
     }
 
     return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        onError(new Error('Timed out waiting for the TV to accept the native pairing code.'))
+      }, PAIRING_CONFIRM_TIMEOUT_MS)
+
       const cleanup = () => {
+        clearTimeout(timeout)
         client.removeListener('ready', onReady)
         client.removeListener('error', onError)
         client.removeListener('unpaired', onUnpaired)
@@ -217,7 +231,7 @@ export class NativeRemoteService extends EventEmitter<NativeRemoteServiceEvents>
     })
   }
 
-  getPendingPairing() {
+  getPendingPairing(): PendingNativePairing | null {
     return this.pendingDevice
   }
 

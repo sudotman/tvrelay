@@ -48,6 +48,7 @@ function registerIpc(options) {
     adbClient,
     getMainWindow
   } = options;
+  let cachedAdbVersion;
   ipcMain.handle(IPC_CHANNELS.devicesList, () => deviceManager2.listDevices());
   ipcMain.handle(IPC_CHANNELS.devicesSave, (_event, input) => deviceManager2.saveDevice(input));
   ipcMain.handle(IPC_CHANNELS.devicesDelete, (_event, deviceId) => deviceManager2.deleteDevice(deviceId));
@@ -75,10 +76,9 @@ function registerIpc(options) {
   ipcMain.handle(IPC_CHANNELS.actionsRunQuickAction, (_event, id) => actionController.runQuickAction(id));
   ipcMain.handle(IPC_CHANNELS.diagnosticsGetStatus, async () => {
     const adbInfo = await adbLocator.locate();
-    const version = adbInfo.available ? await adbClient.version() : void 0;
+    const version = adbInfo.available ? cachedAdbVersion ??= await adbClient.version() : void 0;
     const health = await deviceManager2.getHealth(adbInfo.available);
-    const foregroundApp = adbInfo.available && deviceManager2.getConnectionState().status === "connected" ? await appController.getForegroundApp().catch(() => null) : null;
-    const quickActions = actionController.listQuickActions(health, foregroundApp);
+    const quickActions = actionController.listQuickActions(health, null);
     return {
       adb: {
         available: adbInfo.available,
@@ -94,7 +94,7 @@ function registerIpc(options) {
       capabilities: deviceManager2.getCapabilities(),
       health,
       recommendedActions: health?.recommendedActions ?? [],
-      foregroundApp,
+      foregroundApp: null,
       quickActions
     };
   });
@@ -664,21 +664,41 @@ class ElectronDeviceStore {
   }
 }
 const RECENT_APPS_LIMIT = 8;
-function canUseNative(device) {
+function hasNativeProfile(device) {
   return Boolean(device.nativeRemote);
+}
+function hasNativeCertificate(device) {
+  return Boolean(device.nativeRemote?.certificate?.key && device.nativeRemote?.certificate?.cert);
+}
+function canConnectViaNative(device) {
+  return hasNativeProfile(device) && hasNativeCertificate(device);
 }
 function canUseAdb(device) {
   return device.adbEnabled !== false;
 }
 function getBackendOrder(device) {
   const preferred = device.preferredBackend ?? "adb";
+  const nativeReady = canConnectViaNative(device);
+  const adbReady = canUseAdb(device);
   if (preferred === "native") {
-    return ["native"];
+    if (nativeReady) {
+      return ["native"];
+    }
+    return adbReady ? ["adb"] : ["native"];
   }
   if (preferred === "adb") {
     return ["adb"];
   }
-  return ["native", "adb"];
+  if (nativeReady && adbReady) {
+    return ["native", "adb"];
+  }
+  if (nativeReady) {
+    return ["native"];
+  }
+  if (adbReady) {
+    return ["adb"];
+  }
+  return ["native"];
 }
 function createBackendHealthSnapshot(overrides) {
   return {
@@ -712,7 +732,7 @@ class DeviceManager extends EventEmitter {
       const activeDevice = this.getActiveDevice();
       if (activeDevice) {
         this.updateBackendHealth(activeDevice.id, "native", {
-          available: canUseNative(activeDevice),
+          available: hasNativeProfile(activeDevice),
           ready: false,
           lastState: "error",
           lastError: message
@@ -726,12 +746,22 @@ class DeviceManager extends EventEmitter {
       });
     });
     this.emitDevicesChanged();
-    if (this.getActiveDevice()) {
-      await this.attemptReconnect();
-    }
     this.healthCheckTimer = setInterval(() => {
       void this.performHealthCheck();
     }, 7e3);
+    if (this.getActiveDevice()) {
+      queueMicrotask(() => {
+        void this.attemptReconnect().catch((error) => {
+          const activeDevice = this.getActiveDevice();
+          this.activeBackend = null;
+          this.updateConnectionState({
+            status: "error",
+            deviceId: activeDevice?.id,
+            message: error instanceof Error ? error.message : "Reconnect failed."
+          });
+        });
+      });
+    }
   }
   dispose() {
     this.nativeRemoteService.disconnect();
@@ -757,12 +787,14 @@ class DeviceManager extends EventEmitter {
   }
   getCapabilities() {
     const activeDevice = this.getActiveDevice();
-    const adbEnabled = Boolean(activeDevice && canUseAdb(activeDevice));
+    const adbReady = Boolean(
+      activeDevice && canUseAdb(activeDevice) && (this.activeBackend === "adb" ? this.connectionState.status === "connected" : activeDevice.backendHealth?.adb.ready)
+    );
     return {
-      nativeRemote: Boolean(activeDevice && canUseNative(activeDevice)),
-      adbFallback: adbEnabled,
-      typing: this.activeBackend === "adb" || adbEnabled,
-      apps: this.activeBackend === "adb" || adbEnabled
+      nativeRemote: Boolean(activeDevice && canConnectViaNative(activeDevice)),
+      adbFallback: adbReady,
+      typing: this.activeBackend === "adb" || adbReady,
+      apps: this.activeBackend === "adb" || adbReady
     };
   }
   async getHealth(adbAvailable) {
@@ -869,7 +901,7 @@ class DeviceManager extends EventEmitter {
     }
     if (this.getPendingNativePairing()?.deviceId === activeDevice.id) {
       this.updateBackendHealth(activeDevice.id, "native", {
-        available: canUseNative(activeDevice),
+        available: hasNativeProfile(activeDevice),
         ready: false,
         lastState: "pairing",
         lastError: "Native pairing is still waiting for a code from the TV."
@@ -957,7 +989,7 @@ class DeviceManager extends EventEmitter {
       return this.listDevices();
     }
     const pendingNativePairing = this.nativeRemoteService.getPendingPairing();
-    const shouldTearDownSession = this.activeDeviceId === deviceId || pendingNativePairing?.id === deviceId;
+    const shouldTearDownSession = this.activeDeviceId === deviceId || pendingNativePairing?.deviceId === deviceId;
     if (shouldTearDownSession) {
       if (this.activeBackend === "native" || pendingNativePairing) {
         this.nativeRemoteService.disconnect();
@@ -1051,20 +1083,56 @@ class DeviceManager extends EventEmitter {
       deviceId: saved.id,
       message: `Start the pairing prompt on ${saved.name}, then enter the code shown on the TV.`
     });
-    const result = await this.nativeRemoteService.connect(saved);
-    if (result.status === "pairing") {
+    try {
+      const result = await this.nativeRemoteService.connect(saved);
+      if (result.status === "pairing") {
+        this.activeBackend = null;
+        return this.connectionState;
+      }
+      return this.finalizeNativeConnection(saved, result.certificate);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not start native pairing.";
       this.activeBackend = null;
-      return this.connectionState;
+      this.updateBackendHealth(saved.id, "native", {
+        available: true,
+        ready: false,
+        lastState: "error",
+        lastError: message
+      });
+      this.updateConnectionState({
+        status: "error",
+        backend: "native",
+        deviceId: saved.id,
+        message
+      });
+      throw error;
     }
-    return this.finalizeNativeConnection(saved, result.certificate);
   }
   async completeNativePairing(code) {
     const activeDevice = this.getActiveDevice();
     if (!activeDevice) {
       throw new Error("No TV is currently waiting for a native remote pairing code.");
     }
-    const certificate = await this.nativeRemoteService.completePairing(code);
-    return this.finalizeNativeConnection(activeDevice, certificate);
+    try {
+      const certificate = await this.nativeRemoteService.completePairing(code);
+      return this.finalizeNativeConnection(activeDevice, certificate);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Native pairing confirmation failed.";
+      this.activeBackend = null;
+      this.updateBackendHealth(activeDevice.id, "native", {
+        available: hasNativeProfile(activeDevice),
+        ready: false,
+        lastState: "error",
+        lastError: message
+      });
+      this.updateConnectionState({
+        status: "error",
+        backend: "native",
+        deviceId: activeDevice.id,
+        message
+      });
+      throw error;
+    }
   }
   async pairAndConnect(input) {
     this.updateConnectionState({
@@ -1123,7 +1191,7 @@ class DeviceManager extends EventEmitter {
     this.persist();
     let nativeError = null;
     for (const backend of getBackendOrder(baseDevice)) {
-      if (backend === "native" && canUseNative(baseDevice)) {
+      if (backend === "native" && canConnectViaNative(baseDevice)) {
         try {
           const result = await this.connectViaNative(baseDevice);
           if (result.status === "pairing") {
@@ -1174,7 +1242,7 @@ class DeviceManager extends EventEmitter {
     }
     if (activeDevice && this.activeBackend) {
       this.updateBackendHealth(activeDevice.id, this.activeBackend, {
-        available: this.activeBackend === "adb" ? canUseAdb(activeDevice) : canUseNative(activeDevice),
+        available: this.activeBackend === "adb" ? canUseAdb(activeDevice) : hasNativeProfile(activeDevice),
         ready: false,
         lastState: "disconnected"
       });
@@ -1296,8 +1364,20 @@ class DeviceManager extends EventEmitter {
     if (!canUseAdb(activeDevice)) {
       throw new Error("This TV is using native remote only. Enable ADB fallback in Setup to unlock typing and installed-app launching.");
     }
-    await this.adbClient.connect(activeDevice.host, activeDevice.connectPort);
-    const state = await this.adbClient.getConnectionState(activeDevice);
+    const initialState = await this.adbClient.getConnectionState(activeDevice);
+    if (initialState.status === "unauthorized") {
+      this.updateBackendHealth(activeDevice.id, "adb", {
+        available: true,
+        ready: false,
+        lastState: "unauthorized",
+        lastError: initialState.message
+      });
+      throw new Error(initialState.message ?? "Authorize this computer in the TV wireless debugging prompt first.");
+    }
+    if (initialState.status !== "connected") {
+      await this.adbClient.connect(activeDevice.host, activeDevice.connectPort);
+    }
+    const state = initialState.status === "connected" ? initialState : await this.adbClient.getConnectionState(activeDevice);
     if (state.status !== "connected") {
       this.updateBackendHealth(activeDevice.id, "adb", {
         available: true,
@@ -1403,7 +1483,7 @@ class DeviceManager extends EventEmitter {
       }),
       native: createBackendHealthSnapshot({
         ...saved.backendHealth?.native,
-        available: canUseNative(saved),
+        available: hasNativeProfile(saved),
         ready: false,
         lastCheckedAt: now,
         lastState: saved.backendHealth?.native.lastState ?? "disconnected",
@@ -1529,7 +1609,7 @@ class DeviceManager extends EventEmitter {
   }
   resolveNativeHealth(device) {
     const saved = createBackendHealthSnapshot(device.backendHealth?.native);
-    if (!canUseNative(device)) {
+    if (!hasNativeProfile(device)) {
       return createBackendHealthSnapshot({
         ...saved,
         available: false,
@@ -1565,7 +1645,7 @@ class DeviceManager extends EventEmitter {
       connectPort: input.connectPort ?? 5555,
       pairPort: input.pairPort,
       mode: input.mode ?? "connect",
-      preferredBackend: input.preferredBackend ?? (nativeRemote ? "auto" : "adb"),
+      preferredBackend: input.preferredBackend ?? "adb",
       adbEnabled,
       nativeRemote,
       lastConnectedAt: input.lastConnectedAt,
@@ -1585,7 +1665,7 @@ class DeviceManager extends EventEmitter {
       }
     };
   }
-  replaceDevice(deviceId, patch) {
+  replaceDevice(deviceId, patch, options) {
     const existing = this.savedDevices.find((item) => item.id === deviceId);
     if (!existing) {
       throw new Error("That TV profile no longer exists.");
@@ -1596,7 +1676,9 @@ class DeviceManager extends EventEmitter {
     });
     this.savedDevices = this.savedDevices.map((item) => item.id === deviceId ? updated : item);
     this.persist();
-    this.emitDevicesChanged();
+    if (options?.emitDevicesChanged !== false) {
+      this.emitDevicesChanged();
+    }
     return updated;
   }
   updateBackendHealth(deviceId, backend, patch) {
@@ -1610,12 +1692,16 @@ class DeviceManager extends EventEmitter {
       ...patch,
       lastCheckedAt: patch.lastCheckedAt ?? (/* @__PURE__ */ new Date()).toISOString()
     });
-    return this.replaceDevice(deviceId, {
-      backendHealth: {
-        adb: backend === "adb" ? nextSnapshot : createBackendHealthSnapshot(existing.backendHealth?.adb),
-        native: backend === "native" ? nextSnapshot : createBackendHealthSnapshot(existing.backendHealth?.native)
-      }
-    });
+    return this.replaceDevice(
+      deviceId,
+      {
+        backendHealth: {
+          adb: backend === "adb" ? nextSnapshot : createBackendHealthSnapshot(existing.backendHealth?.adb),
+          native: backend === "native" ? nextSnapshot : createBackendHealthSnapshot(existing.backendHealth?.native)
+        }
+      },
+      { emitDevicesChanged: false }
+    );
   }
   updateConnectionState(nextState) {
     this.connectionState = nextState;
@@ -1700,8 +1786,7 @@ class RemoteController {
     if (this.deviceManager.getActiveBackend() === "native") {
       this.nativeRemoteService.sendKey(KEYCODES[command]);
     } else {
-      const serial = buildSerial(activeDevice);
-      await this.adbClient.sendKey(serial, KEYCODES[command]);
+      await this.deviceManager.withAdbAccess((serial) => this.adbClient.sendKey(serial, KEYCODES[command]));
     }
     const cooldownMs = COMMAND_COOLDOWNS_MS[command];
     if (cooldownMs) {
@@ -1930,6 +2015,8 @@ class ActionController {
 }
 const CLIENT_NAME = "Android TV Remote Desktop";
 const DISCOVERY_TIMEOUT_MS = 4e3;
+const CONNECT_TIMEOUT_MS = 1e4;
+const PAIRING_CONFIRM_TIMEOUT_MS = 15e3;
 const DISCOVERY_SERVICE_TYPES = ["androidtvremote2", "androidtvremote"];
 class NativeRemoteService extends EventEmitter {
   activeClient = null;
@@ -1983,7 +2070,13 @@ class NativeRemoteService extends EventEmitter {
     });
     return new Promise((resolve, reject) => {
       let settled = false;
+      const timeout = setTimeout(() => {
+        onError(
+          new Error("Timed out waiting for native remote. If the TV never shows a code, cancel this and use ADB instead.")
+        );
+      }, CONNECT_TIMEOUT_MS);
       const cleanup = () => {
+        clearTimeout(timeout);
         client.removeListener("ready", onReady);
         client.removeListener("secret", onSecret);
         client.removeListener("error", onError);
@@ -2052,7 +2145,11 @@ class NativeRemoteService extends EventEmitter {
       throw new Error("There is no native pairing session waiting for a code.");
     }
     return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        onError(new Error("Timed out waiting for the TV to accept the native pairing code."));
+      }, PAIRING_CONFIRM_TIMEOUT_MS);
       const cleanup = () => {
+        clearTimeout(timeout);
         client.removeListener("ready", onReady);
         client.removeListener("error", onError);
         client.removeListener("unpaired", onUnpaired);
@@ -2147,6 +2244,7 @@ class NativeRemoteService extends EventEmitter {
 }
 let mainWindow = null;
 let deviceManager = null;
+let bootstrapPromise = null;
 function resolvePreloadPath() {
   const candidates = [
     path.join(__dirname, "../preload/index.cjs"),
@@ -2200,7 +2298,6 @@ async function bootstrap() {
   const store = new ElectronDeviceStore();
   const nativeRemoteService = new NativeRemoteService();
   deviceManager = new DeviceManager(store, adbClient, nativeRemoteService);
-  await deviceManager.init();
   const remoteController = new RemoteController(deviceManager, adbClient, nativeRemoteService);
   const appController = new AppController(deviceManager, adbClient);
   const actionController = new ActionController(deviceManager, remoteController, appController);
@@ -2214,14 +2311,32 @@ async function bootstrap() {
     getMainWindow: () => mainWindow
   });
   await createMainWindow();
+  void deviceManager.init().catch((error) => {
+    console.error("Device manager init failed, continuing with empty runtime state.", error);
+  });
+}
+function ensureBootstrapped() {
+  if (bootstrapPromise) {
+    return bootstrapPromise;
+  }
+  bootstrapPromise = bootstrap().catch((error) => {
+    console.error("Application bootstrap failed.", error);
+    bootstrapPromise = null;
+    throw error;
+  });
+  return bootstrapPromise;
 }
 app.whenReady().then(() => {
-  void bootstrap();
+  void ensureBootstrapped();
 });
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    void createMainWindow();
-  }
+  void ensureBootstrapped().then(() => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      void createMainWindow();
+    }
+  }).catch((error) => {
+    console.error("Could not restore application window.", error);
+  });
 });
 app.on("window-all-closed", () => {
   deviceManager?.dispose();

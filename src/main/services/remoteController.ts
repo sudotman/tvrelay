@@ -1,4 +1,3 @@
-import { buildSerial } from './adb/parsers'
 import type { DeviceManager } from './deviceManager'
 import type { ActionFeedback, RemoteCommand } from '@shared/types'
 import type { AdbClient } from './adb/adbClient'
@@ -81,8 +80,7 @@ export class RemoteController {
     if (this.deviceManager.getActiveBackend() === 'native') {
       this.nativeRemoteService.sendKey(KEYCODES[command])
     } else {
-      const serial = buildSerial(activeDevice)
-      await this.adbClient.sendKey(serial, KEYCODES[command])
+      await this.deviceManager.withAdbAccess((serial) => this.adbClient.sendKey(serial, KEYCODES[command]))
     }
 
     const cooldownMs = COMMAND_COOLDOWNS_MS[command]
