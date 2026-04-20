@@ -12803,7 +12803,7 @@ function App() {
   const appSections = groupApps(apps, activeDevice, deferredAppsQuery);
   const visibleAppCount = appSections.favorites.length + appSections.recents.length + appSections.others.length;
   const latestAction = actionFeed[0] ?? null;
-  const activeView = viewTabs.find((item) => item.id === tab) ?? viewTabs[0];
+  viewTabs.find((item) => item.id === tab) ?? viewTabs[0];
   const viewStatus = (() => {
     if (tab === "setup") {
       if (waitingForNativeCode) {
@@ -13586,12 +13586,12 @@ function App() {
   }
   function renderSetupView() {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "workspace setup-workspace", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "workspace-column target-column", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet roster-sheet", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "section-heading", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Step 1" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Device roster" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Choose a TV" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted", children: "Load a saved device, pick one from discovery, or type the host yourself." })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted", children: "Saved devices, nearby discovery, and manual targeting live in one place." })
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             "button",
@@ -13604,7 +13604,7 @@ function App() {
             }
           )
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stack-block", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "roster-section", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "subsection-heading", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "Saved TVs" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: devices.length })
@@ -13647,7 +13647,8 @@ function App() {
             device.id
           )) })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stack-block", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "studio-divider" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "roster-section", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "subsection-heading", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "Nearby TVs" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: discoveredDevices.length })
@@ -13673,54 +13674,57 @@ function App() {
             `${device.host}:${device.remotePort}`
           )) })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "form-grid", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
-            "Friendly name",
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "input",
-              {
-                value: form.name,
-                onChange: (event) => setForm((current) => ({ ...current, name: event.target.value })),
-                placeholder: "Bedroom TV"
-              }
-            )
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "studio-divider" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "roster-section", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "form-grid", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
+              "Friendly name",
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "input",
+                {
+                  value: form.name,
+                  onChange: (event) => setForm((current) => ({ ...current, name: event.target.value })),
+                  placeholder: "Bedroom TV"
+                }
+              )
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
+              "Host / IP",
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "input",
+                {
+                  value: form.host,
+                  onChange: (event) => setForm((current) => ({ ...current, host: event.target.value })),
+                  placeholder: "192.168.1.35"
+                }
+              )
+            ] })
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
-            "Host / IP",
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "target-line", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "Current target" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: hasSelectedTv ? setupTargetName : "No TV selected yet" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: hasSelectedTv ? selectedHostLabel : "Pick a TV above or type the host manually." })
+            ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "input",
+              "button",
               {
-                value: form.host,
-                onChange: (event) => setForm((current) => ({ ...current, host: event.target.value })),
-                placeholder: "192.168.1.35"
+                className: "ghost-button",
+                type: "button",
+                onClick: () => void saveSetup(),
+                disabled: busy === "save" || !hasSelectedTv,
+                children: "Save TV profile"
               }
             )
           ] })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "target-line", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "Current target" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: hasSelectedTv ? setupTargetName : "No TV selected yet" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: hasSelectedTv ? selectedHostLabel : "Pick a TV above or type the host manually." })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "button",
-            {
-              className: "ghost-button",
-              type: "button",
-              onClick: () => void saveSetup(),
-              disabled: busy === "save" || !hasSelectedTv,
-              children: "Save TV profile"
-            }
-          )
         ] })
-      ] }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "workspace-column flow-column", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet emphasis-sheet", children: [
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet studio-sheet", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "studio-section studio-section-primary", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "section-heading", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Step 2" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Connect with ADB first" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "ADB first" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Connect with ADB" }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted", children: "This is the reliable path and the only one that fully powers typing and apps." })
             ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "section-chip", children: "Recommended" })
@@ -13852,10 +13856,11 @@ function App() {
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted compact-copy", children: "Use Pair then connect for normal Android TV Wireless Debugging. Use Direct connect only if this TV is already listening on the saved ADB port. Port 5555 is usually not the right Wireless Debugging port." })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet health-sheet", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "studio-divider" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "studio-section", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "section-heading", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "ADB Checks" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Diagnostics" }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Make failure states concrete" })
             ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -13896,12 +13901,13 @@ function App() {
             ] }, issue.code)) })
           ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted compact-copy", children: "Choose a TV first to see device health and troubleshooting details." })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet optional-sheet", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "studio-divider" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "studio-section studio-section-secondary", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "section-heading", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Step 3" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Native remote is optional" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted", children: "Keep this secondary. It does not replace ADB for typing or installed-app launch." })
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Native remote" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Keep native secondary" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted", children: "It does not replace ADB for typing or installed-app launch." })
             ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "section-chip section-chip-muted", children: "Less reliable" })
           ] }),
@@ -13988,7 +13994,7 @@ function App() {
       );
     }
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "workspace remote-workspace", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "workspace-column remote-primary", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet remote-sheet", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet remote-sheet", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "section-heading", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Live control" }),
@@ -14034,9 +14040,9 @@ function App() {
             ] })
           ] })
         ] })
-      ] }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "workspace-column remote-secondary", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet shortcut-sheet", children: [
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet support-sheet", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "support-section", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "section-heading", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Keyboard mode" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Shortcut map" })
@@ -14046,7 +14052,8 @@ function App() {
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "shortcut-action", children: shortcut.action })
           ] }, shortcut.keys)) })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet text-sheet", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "studio-divider" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "support-section", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "section-heading", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Type remotely" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Text input" }),
@@ -14156,25 +14163,37 @@ function App() {
       /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: toast.title }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: toast.detail })
     ] }, toast.id)) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "masthead", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "brand-block", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Android TV Remote" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { children: "Relay" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "masthead-copy", children: "Dependable Android TV control with clean setup and fast access to remote and apps." })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "masthead-side", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("nav", { className: "tab-nav", "aria-label": "Views", children: viewTabs.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shell-layout", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: `side-rail rail-${connectionTone}`, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rail-brand", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Android TV Remote" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { children: "Relay" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "rail-copy", children: "A dependable desktop remote for Android TV, designed around clear state and fast control." })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("nav", { className: "rail-nav", "aria-label": "Views", children: viewTabs.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",
           {
-            className: `tab-button ${tab === item.id ? "active" : ""}`,
+            className: `rail-tab ${tab === item.id ? "active" : ""}`,
             type: "button",
             onClick: () => setTab(item.id),
             title: item.detail,
-            children: /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: item.label })
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: item.label }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: item.detail })
+            ]
           },
           item.id
         )) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "masthead-actions", children: isConnected ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rail-session", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rail-session-top", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `status-pill tone-${connectionTone}`, children: formatConnectionStatus(connectionState.status) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "status-pill tone-neutral", children: isConnected ? backendLabel(activeBackend) : `Preferred: ${preferredPathLabel}` })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: activeDevice?.name ?? setupTargetName }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: selectedHostLabel }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: liveStatusTitle })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "rail-actions", children: isConnected ? /* @__PURE__ */ jsxRuntimeExports.jsx(
           "button",
           {
             className: "ghost-button danger-button",
@@ -14184,7 +14203,7 @@ function App() {
             children: "Disconnect"
           }
         ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-          tab !== "setup" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "primary-button", type: "button", onClick: () => setTab("setup"), children: "Setup" }) : null,
+          tab !== "setup" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "primary-button", type: "button", onClick: () => setTab("setup"), children: "Open setup" }) : null,
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             "button",
             {
@@ -14196,47 +14215,43 @@ function App() {
             }
           )
         ] }) })
-      ] })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: `status-band status-${connectionTone}`, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "status-band-head", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-pill-row", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `status-pill tone-${statusTone(connectionState.status)}`, children: formatConnectionStatus(connectionState.status) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "status-pill tone-neutral", children: activeView.label }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "status-pill tone-neutral", children: isConnected ? backendLabel(activeBackend) : `Preferred: ${preferredPathLabel}` }),
-        waitingForNativeCode ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "status-pill tone-warning", children: "Native pairing pending" }) : null
-      ] }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-card-grid", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `status-card status-card-hero signal-${connectionTone}`, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: viewStatus.eyebrow }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: viewStatus.title }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: viewStatus.detail })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "main-stage", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: `hero-ribbon ribbon-${connectionTone}`, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "hero-copy", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: viewStatus.eyebrow }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: viewStatus.title }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hero-detail", children: viewStatus.detail })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "signal-strip", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `signal-tile signal-${connectionTone}`, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "Session" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: formatConnectionStatus(connectionState.status) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: isConnected ? backendLabel(activeBackend) : "No active TV session" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `signal-tile signal-${adbTone}`, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "ADB" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: getBackendHealthLabel(health?.adb, diagnostics?.adb.available ? "Not ready" : "Unavailable") }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: diagnostics?.adb.available ? diagnostics.adb.version ?? "ADB detected" : "Install ADB to continue" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `signal-tile signal-${supportTone}`, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: supportStatus.label }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: supportStatus.title }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: supportStatus.detail })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `signal-tile signal-${liveTone}`, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "Live status" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: liveStatusTitle }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: liveStatusDetail })
+            ] })
+          ] })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-card status-card-device signal-neutral", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "TV" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: activeDevice?.name ?? setupTargetName }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: selectedHostLabel })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `status-card signal-${adbTone}`, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "ADB" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: getBackendHealthLabel(health?.adb, diagnostics?.adb.available ? "Not ready" : "Unavailable") }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: diagnostics?.adb.available ? diagnostics.adb.version ?? "ADB detected" : "Install ADB to continue" })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `status-card signal-${supportTone}`, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: supportStatus.label }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: supportStatus.title }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: supportStatus.detail })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `status-card status-card-live signal-${liveTone}`, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "Live status" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: liveStatusTitle }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: liveStatusDetail })
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: "workspace-shell", children: [
+          tab === "setup" ? renderSetupView() : null,
+          tab === "remote" ? renderRemoteView() : null,
+          tab === "apps" ? renderAppsView() : null
         ] })
       ] })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: "workspace-shell", children: [
-      tab === "setup" ? renderSetupView() : null,
-      tab === "remote" ? renderRemoteView() : null,
-      tab === "apps" ? renderAppsView() : null
     ] })
   ] });
 }

@@ -1336,104 +1336,108 @@ export function App() {
   function renderSetupView() {
     return (
       <section className="workspace setup-workspace">
-        <div className="workspace-column target-column">
-          <section className="sheet">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">Step 1</p>
-                <h3>Choose a TV</h3>
-                <p className="muted">Load a saved device, pick one from discovery, or type the host yourself.</p>
-              </div>
-              <button
-                className="ghost-button"
-                type="button"
-                onClick={() => void scanNativeDevices()}
-                disabled={busy === 'discover'}
-              >
-                {busy === 'discover' ? 'Scanning...' : 'Scan network'}
-              </button>
+        <section className="sheet roster-sheet">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Device roster</p>
+              <h3>Choose a TV</h3>
+              <p className="muted">Saved devices, nearby discovery, and manual targeting live in one place.</p>
             </div>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => void scanNativeDevices()}
+              disabled={busy === 'discover'}
+            >
+              {busy === 'discover' ? 'Scanning...' : 'Scan network'}
+            </button>
+          </div>
 
-            <div className="stack-block">
-              <div className="subsection-heading">
-                <span className="focus-label">Saved TVs</span>
-                <strong>{devices.length}</strong>
-              </div>
-              {devices.length === 0 ? (
-                <p className="muted compact-copy">No saved TVs yet. Save the current target after you enter a host.</p>
-              ) : (
-                <div className="row-list">
-                  {devices.map((device) => (
-                    <div
-                      key={device.id}
-                      className={`list-row ${savedSelectedDevice?.id === device.id ? 'active' : ''}`}
-                    >
-                      <div className="row-copy">
-                        <strong>{device.name}</strong>
-                        <span>{device.host}</span>
-                        <small>
-                          {device.lastConnectedAt
-                            ? `${backendLabel(device.lastConnectedBackend)} · ${formatTimestamp(device.lastConnectedAt)}`
-                            : 'Not connected yet'}
-                        </small>
-                      </div>
-                      <div className="row-actions">
-                        <button className="ghost-button" type="button" onClick={() => selectSavedDevice(device)}>
-                          Load
-                        </button>
-                        <button
-                          className="ghost-button"
-                          type="button"
-                          onClick={() => void connectSavedDevice(device)}
-                          disabled={busy === `connect-${device.id}`}
-                        >
-                          Connect
-                        </button>
-                        <button
-                          className="ghost-button danger-button"
-                          type="button"
-                          onClick={() => void deleteSavedDevice(device)}
-                          disabled={busy === `delete-${device.id}`}
-                        >
-                          Delete
-                        </button>
-                      </div>
+          <div className="roster-section">
+            <div className="subsection-heading">
+              <span className="focus-label">Saved TVs</span>
+              <strong>{devices.length}</strong>
+            </div>
+            {devices.length === 0 ? (
+              <p className="muted compact-copy">No saved TVs yet. Save the current target after you enter a host.</p>
+            ) : (
+              <div className="row-list">
+                {devices.map((device) => (
+                  <div
+                    key={device.id}
+                    className={`list-row ${savedSelectedDevice?.id === device.id ? 'active' : ''}`}
+                  >
+                    <div className="row-copy">
+                      <strong>{device.name}</strong>
+                      <span>{device.host}</span>
+                      <small>
+                        {device.lastConnectedAt
+                          ? `${backendLabel(device.lastConnectedBackend)} · ${formatTimestamp(device.lastConnectedAt)}`
+                          : 'Not connected yet'}
+                      </small>
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="stack-block">
-              <div className="subsection-heading">
-                <span className="focus-label">Nearby TVs</span>
-                <strong>{discoveredDevices.length}</strong>
-              </div>
-              {discoveredDevices.length === 0 ? (
-                <p className="muted compact-copy">Discovery is optional. If nothing appears, type the TV host or IP below.</p>
-              ) : (
-                <div className="row-list">
-                  {discoveredDevices.map((device) => (
-                    <div
-                      key={`${device.host}:${device.remotePort}`}
-                      className={`list-row ${form.host === device.host ? 'active' : ''}`}
-                    >
-                      <div className="row-copy">
-                        <strong>{device.name}</strong>
-                        <span>{device.host}</span>
-                        <small>Native {device.remotePort} · Pair {device.pairingPort}</small>
-                      </div>
-                      <div className="row-actions">
-                        <button className="ghost-button" type="button" onClick={() => applyDiscoveredDevice(device)}>
-                          Use TV
-                        </button>
-                      </div>
+                    <div className="row-actions">
+                      <button className="ghost-button" type="button" onClick={() => selectSavedDevice(device)}>
+                        Load
+                      </button>
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() => void connectSavedDevice(device)}
+                        disabled={busy === `connect-${device.id}`}
+                      >
+                        Connect
+                      </button>
+                      <button
+                        className="ghost-button danger-button"
+                        type="button"
+                        onClick={() => void deleteSavedDevice(device)}
+                        disabled={busy === `delete-${device.id}`}
+                      >
+                        Delete
+                      </button>
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
+          <div className="studio-divider" />
+
+          <div className="roster-section">
+            <div className="subsection-heading">
+              <span className="focus-label">Nearby TVs</span>
+              <strong>{discoveredDevices.length}</strong>
+            </div>
+            {discoveredDevices.length === 0 ? (
+              <p className="muted compact-copy">Discovery is optional. If nothing appears, type the TV host or IP below.</p>
+            ) : (
+              <div className="row-list">
+                {discoveredDevices.map((device) => (
+                  <div
+                    key={`${device.host}:${device.remotePort}`}
+                    className={`list-row ${form.host === device.host ? 'active' : ''}`}
+                  >
+                    <div className="row-copy">
+                      <strong>{device.name}</strong>
+                      <span>{device.host}</span>
+                      <small>Native {device.remotePort} · Pair {device.pairingPort}</small>
+                    </div>
+                    <div className="row-actions">
+                      <button className="ghost-button" type="button" onClick={() => applyDiscoveredDevice(device)}>
+                        Use TV
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="studio-divider" />
+
+          <div className="roster-section">
             <div className="form-grid">
               <label>
                 Friendly name
@@ -1468,15 +1472,15 @@ export function App() {
                 Save TV profile
               </button>
             </div>
-          </section>
-        </div>
+          </div>
+        </section>
 
-        <div className="workspace-column flow-column">
-          <section className="sheet emphasis-sheet">
+        <section className="sheet studio-sheet">
+          <div className="studio-section studio-section-primary">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">Step 2</p>
-                <h3>Connect with ADB first</h3>
+                <p className="eyebrow">ADB first</p>
+                <h3>Connect with ADB</h3>
                 <p className="muted">This is the reliable path and the only one that fully powers typing and apps.</p>
               </div>
               <span className="section-chip">Recommended</span>
@@ -1612,12 +1616,14 @@ export function App() {
               Use Pair then connect for normal Android TV Wireless Debugging. Use Direct connect only if this TV is
               already listening on the saved ADB port. Port 5555 is usually not the right Wireless Debugging port.
             </p>
-          </section>
+          </div>
 
-          <section className="sheet health-sheet">
+          <div className="studio-divider" />
+
+          <div className="studio-section">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">ADB Checks</p>
+                <p className="eyebrow">Diagnostics</p>
                 <h3>Make failure states concrete</h3>
               </div>
               <button
@@ -1669,16 +1675,16 @@ export function App() {
             ) : (
               <p className="muted compact-copy">Choose a TV first to see device health and troubleshooting details.</p>
             )}
-          </section>
+          </div>
 
-          <section className="sheet optional-sheet">
+          <div className="studio-divider" />
+
+          <div className="studio-section studio-section-secondary">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">Step 3</p>
-                <h3>Native remote is optional</h3>
-                <p className="muted">
-                  Keep this secondary. It does not replace ADB for typing or installed-app launch.
-                </p>
+                <p className="eyebrow">Native remote</p>
+                <h3>Keep native secondary</h3>
+                <p className="muted">It does not replace ADB for typing or installed-app launch.</p>
               </div>
               <span className="section-chip section-chip-muted">Less reliable</span>
             </div>
@@ -1743,8 +1749,8 @@ export function App() {
               If the TV never shows a code or refuses to pair, cancel it and go back to ADB. That fallback should stay
               visible, not implicit.
             </p>
-          </section>
-        </div>
+          </div>
+        </section>
       </section>
     )
   }
@@ -1764,76 +1770,74 @@ export function App() {
 
     return (
       <section className="workspace remote-workspace">
-        <div className="workspace-column remote-primary">
-          <section className="sheet remote-sheet">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">Live control</p>
-                <h3>{activeDevice?.name ?? 'Connected TV'}</h3>
-                <p className="muted">Use the pad, command keys, or your hardware keyboard on this tab.</p>
+        <section className="sheet remote-sheet">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Live control</p>
+              <h3>{activeDevice?.name ?? 'Connected TV'}</h3>
+              <p className="muted">Use the pad, command keys, or your hardware keyboard on this tab.</p>
+            </div>
+            <div className="status-pair">
+              <span className={`status-pill tone-${statusTone(connectionState.status)}`}>
+                {backendLabel(activeBackend)}
+              </span>
+              <span className="status-pill tone-neutral">{foregroundApp?.displayName ?? 'App unavailable'}</span>
+            </div>
+          </div>
+
+          <div className="remote-stage">
+            <div className="dpad-shell">
+              <div className="dpad">
+                <button type="button" className="dpad-btn up" onClick={() => void sendRemoteCommand('up')}>
+                  Up
+                </button>
+                <button type="button" className="dpad-btn left" onClick={() => void sendRemoteCommand('left')}>
+                  Left
+                </button>
+                <button
+                  type="button"
+                  className="dpad-btn select"
+                  onClick={() => void sendRemoteCommand('select')}
+                >
+                  OK
+                </button>
+                <button type="button" className="dpad-btn right" onClick={() => void sendRemoteCommand('right')}>
+                  Right
+                </button>
+                <button type="button" className="dpad-btn down" onClick={() => void sendRemoteCommand('down')}>
+                  Down
+                </button>
               </div>
-              <div className="status-pair">
-                <span className={`status-pill tone-${statusTone(connectionState.status)}`}>
-                  {backendLabel(activeBackend)}
-                </span>
-                <span className="status-pill tone-neutral">{foregroundApp?.displayName ?? 'App unavailable'}</span>
-              </div>
+              <p className="muted compact-copy">Arrow keys + Enter work here too. Shortcuts never trigger while typing into a field.</p>
             </div>
 
-            <div className="remote-stage">
-              <div className="dpad-shell">
-                <div className="dpad">
-                  <button type="button" className="dpad-btn up" onClick={() => void sendRemoteCommand('up')}>
-                    Up
-                  </button>
-                  <button type="button" className="dpad-btn left" onClick={() => void sendRemoteCommand('left')}>
-                    Left
-                  </button>
-                  <button
-                    type="button"
-                    className="dpad-btn select"
-                    onClick={() => void sendRemoteCommand('select')}
-                  >
-                    OK
-                  </button>
-                  <button type="button" className="dpad-btn right" onClick={() => void sendRemoteCommand('right')}>
-                    Right
-                  </button>
-                  <button type="button" className="dpad-btn down" onClick={() => void sendRemoteCommand('down')}>
-                    Down
-                  </button>
+            <div className="command-groups">
+              <div className="command-group">
+                <div className="subsection-heading">
+                  <span className="focus-label">Core</span>
                 </div>
-                <p className="muted compact-copy">Arrow keys + Enter work here too. Shortcuts never trigger while typing into a field.</p>
+                <div className="command-grid">{coreRemoteButtons.map(renderRemoteActionButton)}</div>
               </div>
 
-              <div className="command-groups">
-                <div className="command-group">
-                  <div className="subsection-heading">
-                    <span className="focus-label">Core</span>
-                  </div>
-                  <div className="command-grid">{coreRemoteButtons.map(renderRemoteActionButton)}</div>
+              <div className="command-group">
+                <div className="subsection-heading">
+                  <span className="focus-label">Playback</span>
                 </div>
+                <div className="command-grid compact-grid">{mediaRemoteButtons.map(renderRemoteActionButton)}</div>
+              </div>
 
-                <div className="command-group">
-                  <div className="subsection-heading">
-                    <span className="focus-label">Playback</span>
-                  </div>
-                  <div className="command-grid compact-grid">{mediaRemoteButtons.map(renderRemoteActionButton)}</div>
+              <div className="command-group">
+                <div className="subsection-heading">
+                  <span className="focus-label">Sound</span>
                 </div>
-
-                <div className="command-group">
-                  <div className="subsection-heading">
-                    <span className="focus-label">Sound</span>
-                  </div>
-                  <div className="command-grid compact-grid">{soundRemoteButtons.map(renderRemoteActionButton)}</div>
-                </div>
+                <div className="command-grid compact-grid">{soundRemoteButtons.map(renderRemoteActionButton)}</div>
               </div>
             </div>
-          </section>
-        </div>
+          </div>
+        </section>
 
-        <div className="workspace-column remote-secondary">
-          <section className="sheet shortcut-sheet">
+        <section className="sheet support-sheet">
+          <div className="support-section">
             <div className="section-heading">
               <div>
                 <p className="eyebrow">Keyboard mode</p>
@@ -1854,9 +1858,11 @@ export function App() {
                 </div>
               ))}
             </div>
-          </section>
+          </div>
 
-          <section className="sheet text-sheet">
+          <div className="studio-divider" />
+
+          <div className="support-section">
             <div className="section-heading">
               <div>
                 <p className="eyebrow">Type remotely</p>
@@ -1908,8 +1914,8 @@ export function App() {
                 Delete
               </button>
             </div>
-          </section>
-        </div>
+          </div>
+        </section>
       </section>
     )
   }
@@ -2029,29 +2035,40 @@ export function App() {
         ))}
       </div>
 
-      <header className="masthead">
-        <div className="brand-block">
-          <p className="eyebrow">Android TV Remote</p>
-          <h1>Relay</h1>
-          <p className="masthead-copy">Dependable Android TV control with clean setup and fast access to remote and apps.</p>
-        </div>
+      <div className="shell-layout">
+        <aside className={`side-rail rail-${connectionTone}`}>
+          <div className="rail-brand">
+            <p className="eyebrow">Android TV Remote</p>
+            <h1>Relay</h1>
+            <p className="rail-copy">A dependable desktop remote for Android TV, designed around clear state and fast control.</p>
+          </div>
 
-        <div className="masthead-side">
-          <nav className="tab-nav" aria-label="Views">
+          <nav className="rail-nav" aria-label="Views">
             {viewTabs.map((item) => (
               <button
                 key={item.id}
-                className={`tab-button ${tab === item.id ? 'active' : ''}`}
+                className={`rail-tab ${tab === item.id ? 'active' : ''}`}
                 type="button"
                 onClick={() => setTab(item.id)}
                 title={item.detail}
               >
                 <strong>{item.label}</strong>
+                <span>{item.detail}</span>
               </button>
             ))}
           </nav>
 
-          <div className="masthead-actions">
+          <div className="rail-session">
+            <div className="rail-session-top">
+              <span className={`status-pill tone-${connectionTone}`}>{formatConnectionStatus(connectionState.status)}</span>
+              <span className="status-pill tone-neutral">{isConnected ? backendLabel(activeBackend) : `Preferred: ${preferredPathLabel}`}</span>
+            </div>
+            <strong>{activeDevice?.name ?? setupTargetName}</strong>
+            <p>{selectedHostLabel}</p>
+            <small>{liveStatusTitle}</small>
+          </div>
+
+          <div className="rail-actions">
             {isConnected ? (
               <button
                 className="ghost-button danger-button"
@@ -2065,7 +2082,7 @@ export function App() {
               <>
                 {tab !== 'setup' ? (
                   <button className="primary-button" type="button" onClick={() => setTab('setup')}>
-                    Setup
+                    Open setup
                   </button>
                 ) : null}
                 <button
@@ -2079,57 +2096,47 @@ export function App() {
               </>
             )}
           </div>
-        </div>
-      </header>
+        </aside>
 
-      <section className={`status-band status-${connectionTone}`}>
-        <div className="status-band-head">
-          <div className="status-pill-row">
-            <span className={`status-pill tone-${statusTone(connectionState.status)}`}>
-              {formatConnectionStatus(connectionState.status)}
-            </span>
-            <span className="status-pill tone-neutral">{activeView.label}</span>
-            <span className="status-pill tone-neutral">
-              {isConnected ? backendLabel(activeBackend) : `Preferred: ${preferredPathLabel}`}
-            </span>
-            {waitingForNativeCode ? <span className="status-pill tone-warning">Native pairing pending</span> : null}
-          </div>
-        </div>
+        <section className="main-stage">
+          <header className={`hero-ribbon ribbon-${connectionTone}`}>
+            <div className="hero-copy">
+              <p className="eyebrow">{viewStatus.eyebrow}</p>
+              <h2>{viewStatus.title}</h2>
+              <p className="hero-detail">{viewStatus.detail}</p>
+            </div>
 
-        <div className="status-card-grid">
-          <div className={`status-card status-card-hero signal-${connectionTone}`}>
-            <span className="focus-label">{viewStatus.eyebrow}</span>
-            <strong>{viewStatus.title}</strong>
-            <small>{viewStatus.detail}</small>
-          </div>
-          <div className="status-card status-card-device signal-neutral">
-            <span className="focus-label">TV</span>
-            <strong>{activeDevice?.name ?? setupTargetName}</strong>
-            <small>{selectedHostLabel}</small>
-          </div>
-          <div className={`status-card signal-${adbTone}`}>
-            <span className="focus-label">ADB</span>
-            <strong>{getBackendHealthLabel(health?.adb, diagnostics?.adb.available ? 'Not ready' : 'Unavailable')}</strong>
-            <small>{diagnostics?.adb.available ? diagnostics.adb.version ?? 'ADB detected' : 'Install ADB to continue'}</small>
-          </div>
-          <div className={`status-card signal-${supportTone}`}>
-            <span className="focus-label">{supportStatus.label}</span>
-            <strong>{supportStatus.title}</strong>
-            <small>{supportStatus.detail}</small>
-          </div>
-          <div className={`status-card status-card-live signal-${liveTone}`}>
-            <span className="focus-label">Live status</span>
-            <strong>{liveStatusTitle}</strong>
-            <small>{liveStatusDetail}</small>
-          </div>
-        </div>
-      </section>
+            <div className="signal-strip">
+              <div className={`signal-tile signal-${connectionTone}`}>
+                <span className="focus-label">Session</span>
+                <strong>{formatConnectionStatus(connectionState.status)}</strong>
+                <small>{isConnected ? backendLabel(activeBackend) : 'No active TV session'}</small>
+              </div>
+              <div className={`signal-tile signal-${adbTone}`}>
+                <span className="focus-label">ADB</span>
+                <strong>{getBackendHealthLabel(health?.adb, diagnostics?.adb.available ? 'Not ready' : 'Unavailable')}</strong>
+                <small>{diagnostics?.adb.available ? diagnostics.adb.version ?? 'ADB detected' : 'Install ADB to continue'}</small>
+              </div>
+              <div className={`signal-tile signal-${supportTone}`}>
+                <span className="focus-label">{supportStatus.label}</span>
+                <strong>{supportStatus.title}</strong>
+                <small>{supportStatus.detail}</small>
+              </div>
+              <div className={`signal-tile signal-${liveTone}`}>
+                <span className="focus-label">Live status</span>
+                <strong>{liveStatusTitle}</strong>
+                <small>{liveStatusDetail}</small>
+              </div>
+            </div>
+          </header>
 
-      <main className="workspace-shell">
-        {tab === 'setup' ? renderSetupView() : null}
-        {tab === 'remote' ? renderRemoteView() : null}
-        {tab === 'apps' ? renderAppsView() : null}
-      </main>
+          <main className="workspace-shell">
+            {tab === 'setup' ? renderSetupView() : null}
+            {tab === 'remote' ? renderRemoteView() : null}
+            {tab === 'apps' ? renderAppsView() : null}
+          </main>
+        </section>
+      </div>
     </div>
   )
 }
