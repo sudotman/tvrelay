@@ -436,6 +436,36 @@ export function App() {
     (isConnected
       ? `${activeDevice?.name ?? 'This TV'} is connected over ${backendLabel(activeBackend)}.`
       : health?.detail ?? statusMessage)
+  const connectionTone = statusTone(connectionState.status)
+  const adbTone: 'neutral' | 'positive' | 'danger' | 'warning' =
+    !diagnostics?.adb.available
+      ? 'danger'
+      : health?.adb?.ready
+        ? 'positive'
+        : health?.adb?.lastError
+          ? 'danger'
+          : canUseAdbCard()
+            ? 'warning'
+            : 'neutral'
+  const supportTone: 'neutral' | 'positive' | 'danger' | 'warning' =
+    tab === 'setup'
+      ? nativeSetupState.tone
+      : tab === 'remote'
+        ? foregroundApp?.displayName
+          ? 'positive'
+          : capabilities.apps
+            ? 'warning'
+            : 'neutral'
+        : capabilities.apps
+          ? 'positive'
+          : 'warning'
+  const liveTone: 'neutral' | 'positive' | 'danger' | 'warning' = latestAction
+    ? feedbackTone(latestAction.status)
+    : connectionTone
+
+  function canUseAdbCard(): boolean {
+    return Boolean(diagnostics?.adb.available && activeDevice && !health?.adb?.ready)
+  }
 
   async function refreshDiagnostics(): Promise<void> {
     if (diagnosticsInFlightRef.current) {
@@ -2023,26 +2053,14 @@ export function App() {
 
           <div className="masthead-actions">
             {isConnected ? (
-              <>
-                {tab !== 'remote' ? (
-                  <button className="ghost-button" type="button" onClick={() => setTab('remote')}>
-                    Remote
-                  </button>
-                ) : null}
-                {tab !== 'apps' ? (
-                  <button className="ghost-button" type="button" onClick={() => setTab('apps')}>
-                    Apps
-                  </button>
-                ) : null}
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={() => void disconnect()}
-                  disabled={busy === 'disconnect'}
-                >
-                  Disconnect
-                </button>
-              </>
+              <button
+                className="ghost-button danger-button"
+                type="button"
+                onClick={() => void disconnect()}
+                disabled={busy === 'disconnect'}
+              >
+                Disconnect
+              </button>
             ) : (
               <>
                 {tab !== 'setup' ? (
@@ -2064,7 +2082,7 @@ export function App() {
         </div>
       </header>
 
-      <section className="status-band">
+      <section className={`status-band status-${connectionTone}`}>
         <div className="status-band-head">
           <div className="status-pill-row">
             <span className={`status-pill tone-${statusTone(connectionState.status)}`}>
@@ -2079,27 +2097,27 @@ export function App() {
         </div>
 
         <div className="status-card-grid">
-          <div className="status-card status-card-hero">
+          <div className={`status-card status-card-hero signal-${connectionTone}`}>
             <span className="focus-label">{viewStatus.eyebrow}</span>
             <strong>{viewStatus.title}</strong>
             <small>{viewStatus.detail}</small>
           </div>
-          <div className="status-card">
+          <div className="status-card status-card-device signal-neutral">
             <span className="focus-label">TV</span>
             <strong>{activeDevice?.name ?? setupTargetName}</strong>
             <small>{selectedHostLabel}</small>
           </div>
-          <div className="status-card">
+          <div className={`status-card signal-${adbTone}`}>
             <span className="focus-label">ADB</span>
             <strong>{getBackendHealthLabel(health?.adb, diagnostics?.adb.available ? 'Not ready' : 'Unavailable')}</strong>
             <small>{diagnostics?.adb.available ? diagnostics.adb.version ?? 'ADB detected' : 'Install ADB to continue'}</small>
           </div>
-          <div className="status-card">
+          <div className={`status-card signal-${supportTone}`}>
             <span className="focus-label">{supportStatus.label}</span>
             <strong>{supportStatus.title}</strong>
             <small>{supportStatus.detail}</small>
           </div>
-          <div className="status-card status-card-live">
+          <div className={`status-card status-card-live signal-${liveTone}`}>
             <span className="focus-label">Live status</span>
             <strong>{liveStatusTitle}</strong>
             <small>{liveStatusDetail}</small>

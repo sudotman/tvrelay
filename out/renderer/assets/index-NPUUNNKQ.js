@@ -12871,6 +12871,13 @@ function App() {
   })();
   const liveStatusTitle = latestAction?.title ?? (isConnected ? "Session stable" : "Waiting for connection");
   const liveStatusDetail = latestAction?.detail ?? (isConnected ? `${activeDevice?.name ?? "This TV"} is connected over ${backendLabel(activeBackend)}.` : health?.detail ?? statusMessage);
+  const connectionTone = statusTone(connectionState.status);
+  const adbTone = !diagnostics?.adb.available ? "danger" : health?.adb?.ready ? "positive" : health?.adb?.lastError ? "danger" : canUseAdbCard() ? "warning" : "neutral";
+  const supportTone = tab === "setup" ? nativeSetupState.tone : tab === "remote" ? foregroundApp?.displayName ? "positive" : capabilities.apps ? "warning" : "neutral" : capabilities.apps ? "positive" : "warning";
+  const liveTone = latestAction ? feedbackTone(latestAction.status) : connectionTone;
+  function canUseAdbCard() {
+    return Boolean(diagnostics?.adb.available && activeDevice && !health?.adb?.ready);
+  }
   async function refreshDiagnostics() {
     if (diagnosticsInFlightRef.current) {
       diagnosticsQueuedRef.current = true;
@@ -14167,20 +14174,16 @@ function App() {
           },
           item.id
         )) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "masthead-actions", children: isConnected ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-          tab !== "remote" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost-button", type: "button", onClick: () => setTab("remote"), children: "Remote" }) : null,
-          tab !== "apps" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost-button", type: "button", onClick: () => setTab("apps"), children: "Apps" }) : null,
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "button",
-            {
-              className: "ghost-button",
-              type: "button",
-              onClick: () => void disconnect(),
-              disabled: busy === "disconnect",
-              children: "Disconnect"
-            }
-          )
-        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "masthead-actions", children: isConnected ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            className: "ghost-button danger-button",
+            type: "button",
+            onClick: () => void disconnect(),
+            disabled: busy === "disconnect",
+            children: "Disconnect"
+          }
+        ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
           tab !== "setup" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "primary-button", type: "button", onClick: () => setTab("setup"), children: "Setup" }) : null,
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             "button",
@@ -14195,7 +14198,7 @@ function App() {
         ] }) })
       ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "status-band", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: `status-band status-${connectionTone}`, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "status-band-head", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-pill-row", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `status-pill tone-${statusTone(connectionState.status)}`, children: formatConnectionStatus(connectionState.status) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "status-pill tone-neutral", children: activeView.label }),
@@ -14203,27 +14206,27 @@ function App() {
         waitingForNativeCode ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "status-pill tone-warning", children: "Native pairing pending" }) : null
       ] }) }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-card-grid", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-card status-card-hero", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `status-card status-card-hero signal-${connectionTone}`, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: viewStatus.eyebrow }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: viewStatus.title }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: viewStatus.detail })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-card", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-card status-card-device signal-neutral", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "TV" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: activeDevice?.name ?? setupTargetName }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: selectedHostLabel })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-card", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `status-card signal-${adbTone}`, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "ADB" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: getBackendHealthLabel(health?.adb, diagnostics?.adb.available ? "Not ready" : "Unavailable") }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: diagnostics?.adb.available ? diagnostics.adb.version ?? "ADB detected" : "Install ADB to continue" })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-card", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `status-card signal-${supportTone}`, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: supportStatus.label }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: supportStatus.title }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: supportStatus.detail })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-card status-card-live", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `status-card status-card-live signal-${liveTone}`, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "Live status" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: liveStatusTitle }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: liveStatusDetail })
