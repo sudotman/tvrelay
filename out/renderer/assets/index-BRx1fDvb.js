@@ -12869,8 +12869,8 @@ function App() {
       detail: capabilities.apps ? totalApps > 0 ? "Refresh anytime to rebuild the list." : "Load apps once to build the list." : "Installed-app browsing unlocks after ADB connects."
     };
   })();
-  const liveStatusTitle = latestAction?.title ?? health?.summary ?? (isConnected ? "Connected and standing by" : "Standing by");
-  const liveStatusDetail = latestAction?.detail ?? health?.detail ?? statusMessage;
+  const liveStatusTitle = latestAction?.title ?? (isConnected ? "Session stable" : "Waiting for connection");
+  const liveStatusDetail = latestAction?.detail ?? (isConnected ? `${activeDevice?.name ?? "This TV"} is connected over ${backendLabel(activeBackend)}.` : health?.detail ?? statusMessage);
   async function refreshDiagnostics() {
     if (diagnosticsInFlightRef.current) {
       diagnosticsQueuedRef.current = true;
@@ -13986,7 +13986,7 @@ function App() {
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Live control" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: activeDevice?.name ?? "Connected TV" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted", children: "Use the pad, the command keys, or your hardware keyboard on this tab." })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted", children: "Use the pad, command keys, or your hardware keyboard on this tab." })
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-pair", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `status-pill tone-${statusTone(connectionState.status)}`, children: backendLabel(activeBackend) }),
@@ -14029,17 +14029,17 @@ function App() {
         ] })
       ] }) }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "workspace-column remote-secondary", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet shortcut-sheet", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "section-heading", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Keyboard mode" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Shortcut map" })
           ] }) }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "shortcut-list", children: shortcutLegend.map((shortcut) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shortcut-row", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: shortcut.keys }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: shortcut.action })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "shortcut-keys", children: shortcut.keys.split(" / ").map((part) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "shortcut-key", children: part }, part)) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "shortcut-action", children: shortcut.action })
           ] }, shortcut.keys)) })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet text-sheet", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "section-heading", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Type remotely" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Text input" }),

@@ -430,8 +430,12 @@ export function App() {
         : 'Installed-app browsing unlocks after ADB connects.'
     }
   })()
-  const liveStatusTitle = latestAction?.title ?? health?.summary ?? (isConnected ? 'Connected and standing by' : 'Standing by')
-  const liveStatusDetail = latestAction?.detail ?? health?.detail ?? statusMessage
+  const liveStatusTitle = latestAction?.title ?? (isConnected ? 'Session stable' : 'Waiting for connection')
+  const liveStatusDetail =
+    latestAction?.detail ??
+    (isConnected
+      ? `${activeDevice?.name ?? 'This TV'} is connected over ${backendLabel(activeBackend)}.`
+      : health?.detail ?? statusMessage)
 
   async function refreshDiagnostics(): Promise<void> {
     if (diagnosticsInFlightRef.current) {
@@ -1736,7 +1740,7 @@ export function App() {
               <div>
                 <p className="eyebrow">Live control</p>
                 <h3>{activeDevice?.name ?? 'Connected TV'}</h3>
-                <p className="muted">Use the pad, the command keys, or your hardware keyboard on this tab.</p>
+                <p className="muted">Use the pad, command keys, or your hardware keyboard on this tab.</p>
               </div>
               <div className="status-pair">
                 <span className={`status-pill tone-${statusTone(connectionState.status)}`}>
@@ -1799,7 +1803,7 @@ export function App() {
         </div>
 
         <div className="workspace-column remote-secondary">
-          <section className="sheet">
+          <section className="sheet shortcut-sheet">
             <div className="section-heading">
               <div>
                 <p className="eyebrow">Keyboard mode</p>
@@ -1809,14 +1813,20 @@ export function App() {
             <div className="shortcut-list">
               {shortcutLegend.map((shortcut) => (
                 <div key={shortcut.keys} className="shortcut-row">
-                  <strong>{shortcut.keys}</strong>
-                  <span>{shortcut.action}</span>
+                  <div className="shortcut-keys">
+                    {shortcut.keys.split(' / ').map((part) => (
+                      <span key={part} className="shortcut-key">
+                        {part}
+                      </span>
+                    ))}
+                  </div>
+                  <span className="shortcut-action">{shortcut.action}</span>
                 </div>
               ))}
             </div>
           </section>
 
-          <section className="sheet">
+          <section className="sheet text-sheet">
             <div className="section-heading">
               <div>
                 <p className="eyebrow">Type remotely</p>
