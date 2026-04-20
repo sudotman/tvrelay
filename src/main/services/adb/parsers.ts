@@ -1,4 +1,10 @@
-import type { ConnectionState, ForegroundApp, LaunchableApp, SavedDevice } from '@shared/types'
+import type {
+  ConnectionState,
+  DiscoveredAdbService,
+  ForegroundApp,
+  LaunchableApp,
+  SavedDevice
+} from '@shared/types'
 
 const APP_TITLE_ALIASES: Record<string, string> = {
   'com.apple.atve.androidtv.appletv': 'Apple TV',
@@ -38,6 +44,36 @@ export function parseAdbDevices(output: string): ParsedAdbDevice[] {
       return serial && state ? { serial, state } : null
     })
     .filter((item): item is ParsedAdbDevice => item !== null)
+}
+
+export function parseAdbMdnsServices(output: string): DiscoveredAdbService[] {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.toLowerCase().startsWith('list of discovered mdns services'))
+    .map((line) => {
+      const match = line.match(/^(.+?)\s+(_adb(?:-tls-(?:pairing|connect))?\._tcp)\s+(\d+\.\d+\.\d+\.\d+):(\d+)$/)
+
+      if (!match) {
+        return null
+      }
+
+      const [, name, rawType, host, portText] = match
+      const serviceType =
+        rawType === '_adb-tls-pairing._tcp'
+          ? 'pairing'
+          : rawType === '_adb-tls-connect._tcp'
+            ? 'connect'
+            : 'legacy'
+
+      return {
+        name: name.trim(),
+        host,
+        port: Number(portText),
+        serviceType
+      } satisfies DiscoveredAdbService
+    })
+    .filter((item): item is DiscoveredAdbService => item !== null)
 }
 
 function humanizePackage(packageName: string): string {

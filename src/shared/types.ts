@@ -154,6 +154,20 @@ export interface DiscoveredNativeDevice {
   serviceLabel?: string
 }
 
+export interface DiscoveredAdbService {
+  name: string
+  host: string
+  port: number
+  serviceType: 'pairing' | 'connect' | 'legacy'
+}
+
+export interface ResolvedAdbEndpoints {
+  host: string
+  pairPort?: number
+  connectPort?: number
+  services: DiscoveredAdbService[]
+}
+
 export interface PendingNativePairing {
   deviceId?: string
   name: string

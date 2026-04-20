@@ -1,6 +1,7 @@
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import type {
   ActionFeedback,
+  BackendHealthSnapshot,
   ConnectionBackend,
   ConnectionState,
   DiagnosticsStatus,
@@ -8,11 +9,11 @@ import type {
   LaunchableApp,
   PreferredConnectionBackend,
   RecommendedAction,
+  ResolvedAdbEndpoints,
   RemoteCommand,
   SavedDevice
 } from '@shared/types'
 import {
-  getQuickActionLabel,
   getRecommendedActionMeta,
   groupApps,
   keyBindings,
@@ -36,21 +37,39 @@ type SetupFormState = {
   adbPairCode: string
 }
 
-const remoteButtons: Array<{ label: string; command: RemoteCommand; accent?: boolean }> = [
+type RemoteButton = {
+  label: string
+  command: RemoteCommand
+  accent?: boolean
+}
+
+const viewTabs: Array<{ id: TabId; label: string; detail: string }> = [
+  { id: 'setup', label: 'Setup', detail: 'TVs, pairing, and connection.' },
+  { id: 'remote', label: 'Remote', detail: 'Playback, typing, and transport.' },
+  { id: 'apps', label: 'Apps', detail: 'Launch what is installed.' }
+]
+
+const coreRemoteButtons: RemoteButton[] = [
   { label: 'Home', command: 'home' },
   { label: 'Back', command: 'back' },
   { label: 'Menu', command: 'menu' },
-  { label: 'Recent Apps', command: 'appSwitch' },
+  { label: 'Apps', command: 'appSwitch' },
   { label: 'Power', command: 'power', accent: true },
-  { label: 'Mute', command: 'mute' },
-  { label: 'Vol +', command: 'volumeUp' },
-  { label: 'Vol -', command: 'volumeDown' },
+  { label: 'Sleep', command: 'sleep' }
+]
+
+const mediaRemoteButtons: RemoteButton[] = [
   { label: 'Play/Pause', command: 'playPause' },
   { label: 'Rewind', command: 'rewind' },
   { label: 'Fast Forward', command: 'fastForward' },
-  { label: 'Next', command: 'next' },
   { label: 'Previous', command: 'previous' },
-  { label: 'Sleep', command: 'sleep' }
+  { label: 'Next', command: 'next' }
+]
+
+const soundRemoteButtons: RemoteButton[] = [
+  { label: 'Mute', command: 'mute' },
+  { label: 'Vol +', command: 'volumeUp' },
+  { label: 'Vol -', command: 'volumeDown' }
 ]
 
 const initialForm: SetupFormState = {
@@ -61,41 +80,11 @@ const initialForm: SetupFormState = {
   nativePairingPort: '6467',
   nativeCode: '',
   adbEnabled: true,
-  adbMode: 'connect',
+  adbMode: 'pair',
   connectPort: '5555',
   adbPairPort: '37099',
   adbPairCode: ''
 }
-
-const viewTabs: Array<{
-  id: TabId
-  label: string
-  eyebrow: string
-  title: string
-  description: string
-}> = [
-  {
-    id: 'setup',
-    label: 'Setup',
-    eyebrow: 'Dashboard',
-    title: 'Set up one TV and keep the next step obvious.',
-    description: 'Choose a TV, use ADB first, and let the health panel tell you what is blocked versus ready.'
-  },
-  {
-    id: 'remote',
-    label: 'Remote',
-    eyebrow: 'Control',
-    title: 'Remote control with a visible keyboard mode.',
-    description: 'Use the pad, the quick actions, or your keyboard without guessing what shortcuts are active.'
-  },
-  {
-    id: 'apps',
-    label: 'Apps',
-    eyebrow: 'Launch',
-    title: 'Pinned apps, recent launches, and the full installed list.',
-    description: 'Keep daily-use apps close while still browsing everything discovered over ADB.'
-  }
-]
 
 function statusTone(state: ConnectionState['status']): 'neutral' | 'positive' | 'danger' | 'warning' {
   switch (state) {
@@ -107,6 +96,23 @@ function statusTone(state: ConnectionState['status']): 'neutral' | 'positive' | 
       return 'danger'
     default:
       return 'neutral'
+  }
+}
+
+function formatConnectionStatus(status: ConnectionState['status']): string {
+  switch (status) {
+    case 'disconnected':
+      return 'Not connected'
+    case 'pairing':
+      return 'Pairing'
+    case 'connecting':
+      return 'Connecting'
+    case 'connected':
+      return 'Connected'
+    case 'unauthorized':
+      return 'Unauthorized'
+    case 'error':
+      return 'Connection error'
   }
 }
 
@@ -158,6 +164,29 @@ function feedbackTone(status: ActionFeedback['status']): 'neutral' | 'positive' 
   }
 }
 
+function getBackendHealthLabel(
+  snapshot: BackendHealthSnapshot | undefined,
+  unavailableLabel: string
+): string {
+  if (!snapshot) {
+    return unavailableLabel
+  }
+
+  if (!snapshot.available) {
+    return unavailableLabel
+  }
+
+  if (snapshot.ready) {
+    return 'Ready'
+  }
+
+  if (snapshot.lastError) {
+    return 'Needs attention'
+  }
+
+  return 'Available'
+}
+
 function getNativeSetupState(input: {
   hasSelectedTv: boolean
   waitingForNativeCode: boolean
@@ -206,7 +235,7 @@ function getNativeSetupState(input: {
     return {
       badge: 'Saved',
       title: 'Native pairing is saved',
-      detail: 'Nothing will start automatically. Use the saved native pairing only when you want to test or use it.',
+      detail: 'Use it only when you intentionally want to try the native path.',
       tone: 'positive'
     }
   }
@@ -221,14 +250,32 @@ function getNativeSetupState(input: {
   }
 
   return {
-    badge: 'Not paired',
+    badge: 'Optional',
     title: 'Native pairing is not saved yet',
-    detail:
-      input.nativeLastConnectedAt
-        ? `Last successful native session was ${formatTimestamp(input.nativeLastConnectedAt)}. Pair again only if you want to reuse it.`
-        : 'Nothing will start automatically. Start native pairing only if you want to try this optional path.',
+    detail: input.nativeLastConnectedAt
+      ? `Last successful native session was ${formatTimestamp(input.nativeLastConnectedAt)}. Pair again only if you want to reuse it.`
+      : 'Nothing will start automatically. Start native pairing only if you want to try this optional path.',
     tone: 'neutral'
   }
+}
+
+function EmptyWorkspace(props: {
+  eyebrow: string
+  title: string
+  detail: string
+  actionLabel: string
+  onAction: () => void
+}) {
+  return (
+    <section className="empty-workspace">
+      <p className="eyebrow">{props.eyebrow}</p>
+      <h3>{props.title}</h3>
+      <p className="muted">{props.detail}</p>
+      <button className="primary-button" type="button" onClick={props.onAction}>
+        {props.actionLabel}
+      </button>
+    </section>
+  )
 }
 
 export function App() {
@@ -240,6 +287,8 @@ export function App() {
   const [appsDeviceId, setAppsDeviceId] = useState<string | null>(null)
   const [appsQuery, setAppsQuery] = useState('')
   const [discoveredDevices, setDiscoveredDevices] = useState<DiscoveredNativeDevice[]>([])
+  const [resolvedAdbEndpoints, setResolvedAdbEndpoints] = useState<ResolvedAdbEndpoints | null>(null)
+  const [adbDiscoveryBusy, setAdbDiscoveryBusy] = useState(false)
   const [form, setForm] = useState<SetupFormState>(initialForm)
   const [textInput, setTextInput] = useState('')
   const [statusMessage, setStatusMessage] = useState('Ready when you are.')
@@ -249,7 +298,6 @@ export function App() {
   const [commandCooldowns, setCommandCooldowns] = useState<Partial<Record<RemoteCommand, number>>>({})
   const [pendingRemoteCommand, setPendingRemoteCommand] = useState<RemoteCommand | null>(null)
   const [pendingAppPackage, setPendingAppPackage] = useState<string | null>(null)
-  const [pendingQuickActionId, setPendingQuickActionId] = useState<string | null>(null)
   const [cooldownTick, setCooldownTick] = useState(Date.now())
   const [foregroundAppState, setForegroundAppState] = useState(diagnostics?.foregroundApp ?? null)
   const deferredAppsQuery = useDeferredValue(appsQuery)
@@ -264,7 +312,6 @@ export function App() {
   const pendingNativePairing = diagnostics?.pendingNativePairing ?? null
   const health = diagnostics?.health ?? null
   const recommendedActions = diagnostics?.recommendedActions ?? []
-  const quickActions = diagnostics?.quickActions ?? []
   const foregroundApp = foregroundAppState ?? diagnostics?.foregroundApp ?? null
   const capabilities = diagnostics?.capabilities ?? {
     nativeRemote: false,
@@ -275,13 +322,13 @@ export function App() {
   const waitingForNativeCode = Boolean(
     pendingNativePairing || (connectionState.status === 'pairing' && connectionState.backend === 'native')
   )
-  const currentView = viewTabs.find((item) => item.id === tab) ?? viewTabs[0]
   const setupTargetName = form.name.trim() || form.host.trim() || 'your TV'
   const hasSelectedTv = Boolean(form.host.trim())
   const isConnected = connectionState.status === 'connected'
   const activeMatchesForm = Boolean(activeDevice && form.host.trim() && activeDevice.host === form.host.trim())
   const savedSelectedDevice = devices.find((device) => device.host === form.host.trim()) ?? null
   const setupDevice = savedSelectedDevice ?? (activeMatchesForm ? activeDevice : null)
+  const setupDeviceId = setupDevice?.id
   const nativePaired = Boolean(setupDevice?.nativeRemote?.certificate)
   const nativeSetupState = getNativeSetupState({
     hasSelectedTv,
@@ -297,19 +344,94 @@ export function App() {
     activeDevice?.host ?? (form.host.trim() !== '' ? form.host.trim() : 'Choose a TV in Setup to begin.')
   const preferredPathLabel =
     form.preferredBackend === 'adb' ? 'ADB' : form.preferredBackend === 'native' ? 'Native Remote' : 'Auto'
-  const recommendedAdbLabel = form.adbMode === 'pair' ? 'Pair ADB and connect' : 'Connect with ADB'
+  const compactAdbLabel = form.adbMode === 'pair' ? 'Pair ADB' : 'Connect ADB'
   const appsAreLoading = busy === 'apps'
   const appSections = groupApps(apps, activeDevice, deferredAppsQuery)
   const visibleAppCount =
     appSections.favorites.length + appSections.recents.length + appSections.others.length
   const latestAction = actionFeed[0] ?? null
-  const heroTitle = waitingForNativeCode
-    ? 'Finish native pairing or switch back to ADB'
-    : health?.summary ??
-      (isConnected && activeDevice ? `Connected to ${activeDevice.name}` : 'No TV connected yet')
-  const heroDetail = waitingForNativeCode
-    ? 'If the TV never shows a pairing code, stop here and use ADB instead.'
-    : health?.detail ?? 'Start with ADB unless you specifically want to try native remote.'
+  const activeView = viewTabs.find((item) => item.id === tab) ?? viewTabs[0]
+  const viewStatus = (() => {
+    if (tab === 'setup') {
+      if (waitingForNativeCode) {
+        return {
+          eyebrow: 'Setup in focus',
+          title: 'Finish the pairing step or move back to ADB',
+          detail: 'Confirm the TV code or cancel and continue with ADB.'
+        }
+      }
+
+      if (hasSelectedTv) {
+        return {
+          eyebrow: 'Setup in focus',
+          title: `Configure ${setupTargetName}`,
+          detail: 'Ports, pairing, and backend preference live here.'
+        }
+      }
+
+      return {
+        eyebrow: 'Setup in focus',
+        title: 'Start with one TV',
+        detail: 'Pick a TV or enter an IP, then connect with ADB.'
+      }
+    }
+
+    if (tab === 'remote') {
+      return isConnected
+        ? {
+            eyebrow: 'Remote in focus',
+            title: `${activeDevice?.name ?? setupTargetName} is live`,
+            detail: 'Core transport is ready. Typing still uses ADB when needed.'
+          }
+        : {
+            eyebrow: 'Remote in focus',
+            title: 'Remote is waiting for a connection',
+            detail: 'Connect a TV in Setup first.'
+          }
+    }
+
+    return capabilities.apps
+      ? {
+          eyebrow: 'Apps in focus',
+          title: 'Installed apps are ready',
+          detail: 'Pinned, recent, and full app browsing live here.'
+        }
+      : {
+          eyebrow: 'Apps in focus',
+          title: 'Apps need ADB access',
+          detail: 'Connect with ADB in Setup first.'
+        }
+  })()
+  const supportStatus = (() => {
+    if (tab === 'setup') {
+      return {
+        label: 'Native',
+        title: nativeSetupState.badge,
+        detail: nativeSetupState.title
+      }
+    }
+
+    if (tab === 'remote') {
+      return {
+        label: 'Foreground app',
+        title: foregroundApp?.displayName ?? 'Unavailable',
+        detail: capabilities.apps ? 'Live while connected' : 'Needs ADB app access'
+      }
+    }
+
+    const totalApps = activeAppsCache?.apps.length ?? apps.length
+    return {
+      label: 'Library',
+      title: capabilities.apps ? `${totalApps} ready` : 'ADB required',
+      detail: capabilities.apps
+        ? totalApps > 0
+          ? 'Refresh anytime to rebuild the list.'
+          : 'Load apps once to build the list.'
+        : 'Installed-app browsing unlocks after ADB connects.'
+    }
+  })()
+  const liveStatusTitle = latestAction?.title ?? health?.summary ?? (isConnected ? 'Connected and standing by' : 'Standing by')
+  const liveStatusDetail = latestAction?.detail ?? health?.detail ?? statusMessage
 
   async function refreshDiagnostics(): Promise<void> {
     if (diagnosticsInFlightRef.current) {
@@ -383,6 +505,23 @@ export function App() {
       unsubscribeDevices()
     }
   }, [])
+
+  useEffect(() => {
+    if (tab !== 'setup') {
+      return
+    }
+
+    if (!form.host.trim() || !form.adbEnabled) {
+      setResolvedAdbEndpoints(null)
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      void detectAdbEndpoints({ silent: true })
+    }, 450)
+
+    return () => window.clearTimeout(timer)
+  }, [form.adbEnabled, form.host, tab])
 
   useEffect(() => {
     if (tab !== 'apps' || connectionState.status !== 'connected' || !capabilities.apps) {
@@ -546,6 +685,53 @@ export function App() {
     }
   }
 
+  async function detectAdbEndpoints(options?: { silent?: boolean }): Promise<ResolvedAdbEndpoints | null> {
+    const host = form.host.trim()
+
+    if (!host || !form.adbEnabled) {
+      setResolvedAdbEndpoints(null)
+      return null
+    }
+
+    setAdbDiscoveryBusy(true)
+    try {
+      const [match] = await window.tvRemoteApi.discoverAdbEndpoints(host)
+      setResolvedAdbEndpoints(match ?? null)
+
+      if (!match) {
+        if (!options?.silent) {
+          setStatusMessage(
+            `No live ADB wireless-debugging ports were detected for ${host}. Open Wireless Debugging on the TV to detect the connect port, or open Pair device with pairing code to detect the pairing port.`
+          )
+        }
+        return null
+      }
+
+      setForm((current) => ({
+        ...current,
+        connectPort: match.connectPort ? String(match.connectPort) : current.connectPort,
+        adbPairPort: match.pairPort ? String(match.pairPort) : current.adbPairPort,
+        adbMode: match.pairPort ? 'pair' : current.adbMode
+      }))
+
+      if (!options?.silent) {
+        setStatusMessage(
+          `Detected ADB ports for ${host}${match.pairPort ? `: pair ${match.pairPort}` : ''}${match.connectPort ? `${match.pairPort ? ' ·' : ':'} connect ${match.connectPort}` : ''}.`
+        )
+      }
+
+      return match
+    } catch (error) {
+      setResolvedAdbEndpoints(null)
+      if (!options?.silent) {
+        setStatusMessage(error instanceof Error ? error.message : 'Could not detect ADB ports.')
+      }
+      return null
+    } finally {
+      setAdbDiscoveryBusy(false)
+    }
+  }
+
   function applyDiscoveredDevice(device: DiscoveredNativeDevice): void {
     setForm((current) => ({
       ...current,
@@ -577,6 +763,7 @@ export function App() {
       )
 
       const saved = await window.tvRemoteApi.saveDevice({
+        id: setupDeviceId,
         name: form.name.trim() || form.host.trim(),
         host: form.host.trim(),
         connectPort: Number(form.connectPort),
@@ -609,6 +796,7 @@ export function App() {
     setBusy('native-pair')
     try {
       const state = await window.tvRemoteApi.beginNativePairing({
+        id: setupDeviceId,
         name: form.name.trim() || form.host.trim(),
         host: form.host.trim(),
         remotePort: Number(form.nativeRemotePort),
@@ -659,6 +847,7 @@ export function App() {
     setBusy('connect')
     try {
       const state = await window.tvRemoteApi.connectDevice({
+        id: setupDeviceId,
         name: form.name.trim() || form.host.trim(),
         host: form.host.trim(),
         connectPort: Number(form.connectPort),
@@ -941,23 +1130,6 @@ export function App() {
     }
   }
 
-  async function runQuickAction(id: string): Promise<void> {
-    setPendingQuickActionId(id)
-    try {
-      const feedback = await window.tvRemoteApi.runQuickAction(id)
-      publishFeedback({
-        ...feedback,
-        kind: 'quick_action',
-        actionId: id
-      })
-      await refreshDiagnostics()
-    } catch (error) {
-      publishErrorFeedback('Quick action failed.', error, 'quick_action', { actionId: id })
-    } finally {
-      setPendingQuickActionId((current) => (current === id ? null : current))
-    }
-  }
-
   function getAppBadgeLabel(app: LaunchableApp): string {
     return app.displayName
       .split(/\s+/)
@@ -975,10 +1147,10 @@ export function App() {
       hash = (hash * 31 + character.charCodeAt(0)) >>> 0
     }
 
-    return `hsl(${hash % 360} 62% 92%)`
+    return `hsl(${hash % 360} 78% 90%)`
   }
 
-  function renderRemoteButtonCopy(button: { label: string; command: RemoteCommand; accent?: boolean }) {
+  function renderRemoteButtonCopy(button: RemoteButton) {
     const remainingMs = commandCooldownRemaining(button.command)
 
     if (remainingMs <= 0) {
@@ -999,83 +1171,66 @@ export function App() {
     }
 
     return (
-      <section className="activity-panel pairing-panel">
-        <div className="section-header">
-          <div>
-            <p className="eyebrow">Native Pairing</p>
-            <h2>Enter the TV code or switch back to ADB</h2>
+      <div className="notice-band warning-band">
+        <div className="notice-copy">
+          <strong>{pendingNativePairing ? `Enter the code for ${pendingNativePairing.name}` : 'Enter the TV code'}</strong>
+          <span>
+            {pendingNativePairing
+              ? 'If the TV never shows a pairing code, stop here and use ADB instead.'
+              : 'If the TV never shows a code, cancel this and go back to ADB.'}
+          </span>
+        </div>
+        <div className="pairing-inline">
+          <input
+            value={form.nativeCode}
+            onChange={(event) => setForm((current) => ({ ...current, nativeCode: event.target.value }))}
+            placeholder="TV pairing code"
+          />
+          <div className="button-row">
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => void completeNativePairing()}
+              disabled={busy === 'native-confirm' || !form.nativeCode.trim()}
+            >
+              Confirm code
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => void connectUsingSetup('adb')}
+              disabled={!hasSelectedTv || !form.adbEnabled || busy === 'connect'}
+            >
+              Switch to ADB
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => void cancelNativePairing()}
+              disabled={busy === 'disconnect'}
+            >
+              Cancel
+            </button>
           </div>
-          <span className="section-chip section-chip-muted">Temporary</span>
         </div>
-        <p className="muted">
-          {pendingNativePairing
-            ? `${pendingNativePairing.name} is waiting for a native pairing code. If the TV never shows one, stop here and go back to ADB.`
-            : 'If the TV never shows a code, cancel this and use ADB instead.'}
-        </p>
-        <div className="field-row pairing-fields">
-          <label>
-            TV pairing code
-            <input
-              value={form.nativeCode}
-              onChange={(event) => setForm((current) => ({ ...current, nativeCode: event.target.value }))}
-              placeholder="TV pairing code"
-            />
-          </label>
-        </div>
-        <div className="action-row compact">
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => void completeNativePairing()}
-            disabled={busy === 'native-confirm' || !form.nativeCode.trim()}
-          >
-            Confirm code
-          </button>
-          <button
-            className="ghost-button"
-            type="button"
-            onClick={() => void connectUsingSetup('adb')}
-            disabled={!hasSelectedTv || !form.adbEnabled || busy === 'connect'}
-          >
-            Switch to ADB
-          </button>
-          <button
-            className="ghost-button"
-            type="button"
-            onClick={() => void cancelNativePairing()}
-            disabled={busy === 'disconnect'}
-          >
-            Cancel
-          </button>
-        </div>
-      </section>
+      </div>
     )
   }
 
-  function renderRecommendedButtons() {
-    if (recommendedActions.length === 0) {
-      return null
-    }
+  function renderRemoteActionButton(button: RemoteButton) {
+    const isCoolingDown = commandCooldownRemaining(button.command) > 0
+    const isPending = pendingRemoteCommand === button.command
 
     return (
-      <div className="action-strip">
-        {recommendedActions.map((action) => {
-          const meta = getRecommendedActionMeta(action)
-
-          return (
-            <button
-              key={action}
-              className="primary-button"
-              type="button"
-              onClick={() => void runRecommendedAction(action)}
-              disabled={busy !== null}
-              title={meta.detail}
-            >
-              {meta.label}
-            </button>
-          )
-        })}
-      </div>
+      <button
+        key={button.command}
+        type="button"
+        className={`command-button ${button.accent ? 'accent' : ''} ${isPending ? 'is-pending' : ''} ${isCoolingDown ? 'is-cooling-down' : ''}`}
+        onClick={() => void sendRemoteCommand(button.command)}
+        disabled={!isConnected || isPending || isCoolingDown}
+      >
+        {renderRemoteButtonCopy(button)}
+      </button>
     )
   }
 
@@ -1085,10 +1240,13 @@ export function App() {
     }
 
     return (
-      <section className="app-section-block">
-        <div className="section-header compact-header">
-          <h3>{title}</h3>
-          <span>{sectionApps.length}</span>
+      <section className="app-group" key={title}>
+        <div className="group-heading">
+          <div>
+            <span className="focus-label">{title}</span>
+            <h3>{title}</h3>
+          </div>
+          <span className="section-count">{sectionApps.length}</span>
         </div>
         <div className="app-list">
           {sectionApps.map((app) => {
@@ -1096,47 +1254,41 @@ export function App() {
             const isLaunching = pendingAppPackage === app.packageName
 
             return (
-              <article
-                key={app.packageName}
-                className={`app-card ${isLaunching ? 'app-card-busy' : ''}`}
-                title={app.packageName}
-              >
-                <div className="app-card-top">
-                  <div className="app-card-head">
-                    {app.iconDataUrl ? (
-                      <img className="app-icon" src={app.iconDataUrl} alt="" aria-hidden="true" />
-                    ) : (
-                      <div
-                        className="app-badge"
-                        style={{ backgroundColor: getAppBadgeTone(app.packageName) }}
-                        aria-hidden="true"
-                      >
-                        {getAppBadgeLabel(app)}
-                      </div>
-                    )}
-                    <div className="app-card-copy">
-                      <strong>{app.displayName}</strong>
-                      <small>{app.category === 'leanback' ? 'TV launcher' : 'Standard launcher'}</small>
+              <article key={app.packageName} className={`app-row ${isLaunching ? 'busy' : ''}`}>
+                <div className="app-row-main">
+                  {app.iconDataUrl ? (
+                    <img className="app-icon" src={app.iconDataUrl} alt="" aria-hidden="true" />
+                  ) : (
+                    <div
+                      className="app-badge"
+                      style={{ backgroundColor: getAppBadgeTone(app.packageName) }}
+                      aria-hidden="true"
+                    >
+                      {getAppBadgeLabel(app)}
                     </div>
+                  )}
+                  <div className="app-row-copy">
+                    <strong>{app.displayName}</strong>
+                    <span>{app.category === 'leanback' ? 'TV launcher' : 'Standard launcher'}</span>
+                    {deferredAppsQuery.trim() ? <small>{app.packageName}</small> : null}
                   </div>
+                </div>
+                <div className="row-actions">
                   <button
-                    className={`ghost-button app-pin-button ${isFavorite ? 'active' : ''}`}
+                    className={`ghost-button ${isFavorite ? 'is-selected' : ''}`}
                     type="button"
                     onClick={() => void toggleFavorite(app.packageName)}
                     disabled={busy === `favorite-${app.packageName}`}
                   >
                     {isFavorite ? 'Pinned' : 'Pin'}
                   </button>
-                </div>
-                {deferredAppsQuery.trim() ? <span className="app-package">{app.packageName}</span> : null}
-                <div className="app-card-footer">
                   <button
-                    className="primary-button app-launch-button"
+                    className="primary-button"
                     type="button"
                     onClick={() => void launchApp(app)}
                     disabled={isLaunching}
                   >
-                    {isLaunching ? 'Launching…' : 'Launch'}
+                    {isLaunching ? 'Launching...' : 'Launch'}
                   </button>
                 </div>
               </article>
@@ -1147,8 +1299,687 @@ export function App() {
     )
   }
 
+  function renderSetupView() {
+    return (
+      <section className="workspace setup-workspace">
+        <div className="workspace-column target-column">
+          <section className="sheet">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Step 1</p>
+                <h3>Choose a TV</h3>
+                <p className="muted">Load a saved device, pick one from discovery, or type the host yourself.</p>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => void scanNativeDevices()}
+                disabled={busy === 'discover'}
+              >
+                {busy === 'discover' ? 'Scanning...' : 'Scan network'}
+              </button>
+            </div>
+
+            <div className="stack-block">
+              <div className="subsection-heading">
+                <span className="focus-label">Saved TVs</span>
+                <strong>{devices.length}</strong>
+              </div>
+              {devices.length === 0 ? (
+                <p className="muted compact-copy">No saved TVs yet. Save the current target after you enter a host.</p>
+              ) : (
+                <div className="row-list">
+                  {devices.map((device) => (
+                    <div
+                      key={device.id}
+                      className={`list-row ${savedSelectedDevice?.id === device.id ? 'active' : ''}`}
+                    >
+                      <div className="row-copy">
+                        <strong>{device.name}</strong>
+                        <span>{device.host}</span>
+                        <small>
+                          {device.lastConnectedAt
+                            ? `${backendLabel(device.lastConnectedBackend)} · ${formatTimestamp(device.lastConnectedAt)}`
+                            : 'Not connected yet'}
+                        </small>
+                      </div>
+                      <div className="row-actions">
+                        <button className="ghost-button" type="button" onClick={() => selectSavedDevice(device)}>
+                          Load
+                        </button>
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={() => void connectSavedDevice(device)}
+                          disabled={busy === `connect-${device.id}`}
+                        >
+                          Connect
+                        </button>
+                        <button
+                          className="ghost-button danger-button"
+                          type="button"
+                          onClick={() => void deleteSavedDevice(device)}
+                          disabled={busy === `delete-${device.id}`}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="stack-block">
+              <div className="subsection-heading">
+                <span className="focus-label">Nearby TVs</span>
+                <strong>{discoveredDevices.length}</strong>
+              </div>
+              {discoveredDevices.length === 0 ? (
+                <p className="muted compact-copy">Discovery is optional. If nothing appears, type the TV host or IP below.</p>
+              ) : (
+                <div className="row-list">
+                  {discoveredDevices.map((device) => (
+                    <div
+                      key={`${device.host}:${device.remotePort}`}
+                      className={`list-row ${form.host === device.host ? 'active' : ''}`}
+                    >
+                      <div className="row-copy">
+                        <strong>{device.name}</strong>
+                        <span>{device.host}</span>
+                        <small>Native {device.remotePort} · Pair {device.pairingPort}</small>
+                      </div>
+                      <div className="row-actions">
+                        <button className="ghost-button" type="button" onClick={() => applyDiscoveredDevice(device)}>
+                          Use TV
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="form-grid">
+              <label>
+                Friendly name
+                <input
+                  value={form.name}
+                  onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="Bedroom TV"
+                />
+              </label>
+              <label>
+                Host / IP
+                <input
+                  value={form.host}
+                  onChange={(event) => setForm((current) => ({ ...current, host: event.target.value }))}
+                  placeholder="192.168.1.35"
+                />
+              </label>
+            </div>
+
+            <div className="target-line">
+              <div>
+                <span className="focus-label">Current target</span>
+                <strong>{hasSelectedTv ? setupTargetName : 'No TV selected yet'}</strong>
+                <small>{hasSelectedTv ? selectedHostLabel : 'Pick a TV above or type the host manually.'}</small>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => void saveSetup()}
+                disabled={busy === 'save' || !hasSelectedTv}
+              >
+                Save TV profile
+              </button>
+            </div>
+          </section>
+        </div>
+
+        <div className="workspace-column flow-column">
+          <section className="sheet emphasis-sheet">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Step 2</p>
+                <h3>Connect with ADB first</h3>
+                <p className="muted">This is the reliable path and the only one that fully powers typing and apps.</p>
+              </div>
+              <span className="section-chip">Recommended</span>
+            </div>
+
+            <label className="toggle-row">
+              <input
+                type="checkbox"
+                checked={form.adbEnabled}
+                onChange={(event) => setForm((current) => ({ ...current, adbEnabled: event.target.checked }))}
+              />
+              <span>Enable ADB for this TV</span>
+            </label>
+
+            <div className="form-grid">
+              <label>
+                ADB mode
+                <select
+                  value={form.adbMode}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      adbMode: event.target.value as 'pair' | 'connect'
+                    }))
+                  }
+                  disabled={!form.adbEnabled}
+                >
+                  <option value="connect">Direct connect</option>
+                  <option value="pair">Pair then connect</option>
+                </select>
+              </label>
+              <label>
+                ADB connect port
+                <input
+                  value={form.connectPort}
+                  onChange={(event) => setForm((current) => ({ ...current, connectPort: event.target.value }))}
+                  placeholder="5555"
+                  disabled={!form.adbEnabled}
+                />
+              </label>
+            </div>
+
+            {form.adbMode === 'pair' ? (
+              <div className="form-grid">
+                <label>
+                  ADB pair port
+                  <input
+                    value={form.adbPairPort}
+                    onChange={(event) => setForm((current) => ({ ...current, adbPairPort: event.target.value }))}
+                    placeholder="37099"
+                    disabled={!form.adbEnabled}
+                  />
+                </label>
+                <label>
+                  ADB pair code
+                  <input
+                    value={form.adbPairCode}
+                    onChange={(event) => setForm((current) => ({ ...current, adbPairCode: event.target.value }))}
+                    placeholder="654321"
+                    disabled={!form.adbEnabled}
+                  />
+                </label>
+              </div>
+            ) : null}
+
+            <div className="notice-band">
+              <div className="notice-copy">
+                <strong>
+                  {resolvedAdbEndpoints
+                    ? 'Live ADB ports detected'
+                    : hasSelectedTv
+                      ? 'Live ADB ports not detected yet'
+                      : 'Choose a TV to detect ADB ports'}
+                </strong>
+                <span>
+                  {resolvedAdbEndpoints
+                    ? `${resolvedAdbEndpoints.pairPort ? `Pair ${resolvedAdbEndpoints.pairPort}` : 'Pair port not visible'}${resolvedAdbEndpoints.connectPort ? ` · Connect ${resolvedAdbEndpoints.connectPort}` : ' · Connect port not visible'}. These come from ADB mDNS on this network.`
+                    : hasSelectedTv
+                      ? 'This app can only detect the live Wireless Debugging ports when the TV is advertising them. Open Wireless Debugging to expose the connect port, or open Pair device with pairing code to expose the pairing port.'
+                      : 'The app can auto-detect live Wireless Debugging ports for the selected host when the TV is advertising them.'}
+                </span>
+              </div>
+              <div className="button-row compact-row">
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() => void detectAdbEndpoints()}
+                  disabled={!hasSelectedTv || !form.adbEnabled || adbDiscoveryBusy}
+                >
+                  {adbDiscoveryBusy ? 'Detecting...' : 'Detect ADB ports'}
+                </button>
+              </div>
+            </div>
+
+            <div className="button-row">
+              {form.adbMode === 'pair' ? (
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => void pairAdb()}
+                  disabled={!form.adbEnabled || busy === 'adb-pair' || !hasSelectedTv || !form.adbPairCode.trim()}
+                >
+                  Pair ADB and connect
+                </button>
+              ) : (
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => void connectUsingSetup('adb')}
+                  disabled={!form.adbEnabled || busy === 'connect' || !hasSelectedTv}
+                >
+                  Connect with ADB
+                </button>
+              )}
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setForm((current) => ({ ...current, preferredBackend: 'adb' }))}
+              >
+                Make ADB default
+              </button>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => void saveSetup('adb')}
+                disabled={busy === 'save' || !hasSelectedTv}
+              >
+                Save ADB settings
+              </button>
+            </div>
+
+            <p className="muted compact-copy">
+              Use Pair then connect for normal Android TV Wireless Debugging. Use Direct connect only if this TV is
+              already listening on the saved ADB port. Port 5555 is usually not the right Wireless Debugging port.
+            </p>
+          </section>
+
+          <section className="sheet health-sheet">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">ADB Checks</p>
+                <h3>Make failure states concrete</h3>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => void runAdbTroubleshooter()}
+                disabled={busy === 'troubleshoot' || !hasSelectedTv}
+              >
+                Run checks
+              </button>
+            </div>
+
+            {!diagnostics?.adb.available ? (
+              <div className="notice-band warning-band">
+                <div className="notice-copy">
+                  <strong>ADB is not available</strong>
+                  <span>{diagnostics?.adb.installHint ?? 'Install ADB before you continue.'}</span>
+                </div>
+              </div>
+            ) : (
+              <p className="muted compact-copy">
+                {diagnostics.adb.version} · {diagnostics.adb.path}
+              </p>
+            )}
+
+            {health ? (
+              <>
+                <div className="health-pairs">
+                  <div className={`health-pair tone-${health.adb.ready ? 'positive' : 'neutral'}`}>
+                    <span className="focus-label">ADB</span>
+                    <strong>{getBackendHealthLabel(health.adb, 'Unavailable')}</strong>
+                    <small>{health.adb.lastError ?? `Last success ${formatTimestamp(health.adb.lastConnectedAt)}`}</small>
+                  </div>
+                  <div className={`health-pair tone-${health.native.ready ? 'positive' : 'neutral'}`}>
+                    <span className="focus-label">Native</span>
+                    <strong>{getBackendHealthLabel(health.native, 'Not configured')}</strong>
+                    <small>{health.native.lastError ?? `Last success ${formatTimestamp(health.native.lastConnectedAt)}`}</small>
+                  </div>
+                </div>
+                <div className="issue-stream">
+                  {health.issues.map((issue) => (
+                    <div key={issue.code} className={`issue-row issue-${issue.severity}`}>
+                      <strong>{issue.summary}</strong>
+                      <span>{issue.detail}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="muted compact-copy">Choose a TV first to see device health and troubleshooting details.</p>
+            )}
+          </section>
+
+          <section className="sheet optional-sheet">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Step 3</p>
+                <h3>Native remote is optional</h3>
+                <p className="muted">
+                  Keep this secondary. It does not replace ADB for typing or installed-app launch.
+                </p>
+              </div>
+              <span className="section-chip section-chip-muted">Less reliable</span>
+            </div>
+
+            <div className={`status-strip-inline tone-${nativeSetupState.tone}`}>
+              <div>
+                <span className="focus-label">Native status</span>
+                <strong>{nativeSetupState.title}</strong>
+                <small>{nativeSetupState.detail}</small>
+              </div>
+              <span className={`status-pill tone-${nativeSetupState.tone}`}>{nativeSetupState.badge}</span>
+            </div>
+
+            <div className="form-grid">
+              <label>
+                Native remote port
+                <input
+                  value={form.nativeRemotePort}
+                  onChange={(event) => setForm((current) => ({ ...current, nativeRemotePort: event.target.value }))}
+                  placeholder="6466"
+                />
+              </label>
+              <label>
+                Native pairing port
+                <input
+                  value={form.nativePairingPort}
+                  onChange={(event) => setForm((current) => ({ ...current, nativePairingPort: event.target.value }))}
+                  placeholder="6467"
+                />
+              </label>
+            </div>
+
+            {renderNativePairingPanel()}
+
+            <div className="button-row">
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => void beginNativePairing()}
+                disabled={busy === 'native-pair' || !hasSelectedTv || waitingForNativeCode}
+              >
+                {nativePaired ? 'Pair native again' : 'Start native pairing'}
+              </button>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => void connectUsingSetup('native')}
+                disabled={busy === 'connect' || !nativePaired || !hasSelectedTv}
+              >
+                Connect with saved native pairing
+              </button>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setForm((current) => ({ ...current, preferredBackend: 'native' }))}
+              >
+                Make native default
+              </button>
+            </div>
+
+            <p className="muted compact-copy">
+              If the TV never shows a code or refuses to pair, cancel it and go back to ADB. That fallback should stay
+              visible, not implicit.
+            </p>
+          </section>
+        </div>
+      </section>
+    )
+  }
+
+  function renderRemoteView() {
+    if (!isConnected) {
+      return (
+        <EmptyWorkspace
+          eyebrow="Remote"
+          title="No TV is connected yet"
+          detail="Go to Setup and connect with ADB first. That path is still the most reliable here."
+          actionLabel="Open setup"
+          onAction={() => setTab('setup')}
+        />
+      )
+    }
+
+    return (
+      <section className="workspace remote-workspace">
+        <div className="workspace-column remote-primary">
+          <section className="sheet remote-sheet">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Live control</p>
+                <h3>{activeDevice?.name ?? 'Connected TV'}</h3>
+                <p className="muted">Use the pad, the command keys, or your hardware keyboard on this tab.</p>
+              </div>
+              <div className="status-pair">
+                <span className={`status-pill tone-${statusTone(connectionState.status)}`}>
+                  {backendLabel(activeBackend)}
+                </span>
+                <span className="status-pill tone-neutral">{foregroundApp?.displayName ?? 'App unavailable'}</span>
+              </div>
+            </div>
+
+            <div className="remote-stage">
+              <div className="dpad-shell">
+                <div className="dpad">
+                  <button type="button" className="dpad-btn up" onClick={() => void sendRemoteCommand('up')}>
+                    Up
+                  </button>
+                  <button type="button" className="dpad-btn left" onClick={() => void sendRemoteCommand('left')}>
+                    Left
+                  </button>
+                  <button
+                    type="button"
+                    className="dpad-btn select"
+                    onClick={() => void sendRemoteCommand('select')}
+                  >
+                    OK
+                  </button>
+                  <button type="button" className="dpad-btn right" onClick={() => void sendRemoteCommand('right')}>
+                    Right
+                  </button>
+                  <button type="button" className="dpad-btn down" onClick={() => void sendRemoteCommand('down')}>
+                    Down
+                  </button>
+                </div>
+                <p className="muted compact-copy">Arrow keys + Enter work here too. Shortcuts never trigger while typing into a field.</p>
+              </div>
+
+              <div className="command-groups">
+                <div className="command-group">
+                  <div className="subsection-heading">
+                    <span className="focus-label">Core</span>
+                  </div>
+                  <div className="command-grid">{coreRemoteButtons.map(renderRemoteActionButton)}</div>
+                </div>
+
+                <div className="command-group">
+                  <div className="subsection-heading">
+                    <span className="focus-label">Playback</span>
+                  </div>
+                  <div className="command-grid compact-grid">{mediaRemoteButtons.map(renderRemoteActionButton)}</div>
+                </div>
+
+                <div className="command-group">
+                  <div className="subsection-heading">
+                    <span className="focus-label">Sound</span>
+                  </div>
+                  <div className="command-grid compact-grid">{soundRemoteButtons.map(renderRemoteActionButton)}</div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div className="workspace-column remote-secondary">
+          <section className="sheet">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Keyboard mode</p>
+                <h3>Shortcut map</h3>
+              </div>
+            </div>
+            <div className="shortcut-list">
+              {shortcutLegend.map((shortcut) => (
+                <div key={shortcut.keys} className="shortcut-row">
+                  <strong>{shortcut.keys}</strong>
+                  <span>{shortcut.action}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="sheet">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Type remotely</p>
+                <h3>Text input</h3>
+                <p className="muted">
+                  {activeBackend === 'native'
+                    ? capabilities.typing
+                      ? 'Text input will use ADB fallback.'
+                      : 'ADB is required for text input.'
+                    : 'Text input is ready.'}
+                </p>
+              </div>
+            </div>
+
+            {!capabilities.typing ? (
+              <div className="notice-band">
+                <div className="notice-copy">
+                  <strong>Typing needs ADB</strong>
+                  <span>Go back to Setup and connect or pair ADB for this TV.</span>
+                </div>
+              </div>
+            ) : null}
+
+            <textarea
+              value={textInput}
+              onChange={(event) => setTextInput(event.target.value)}
+              placeholder="Type something to send to the TV..."
+            />
+
+            <div className="button-row">
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => void sendText()}
+                disabled={busy === 'text' || !textInput || !capabilities.typing}
+              >
+                Send text
+              </button>
+              <button className="ghost-button" type="button" onClick={() => setTextInput('')}>
+                Clear
+              </button>
+              <button className="ghost-button" type="button" onClick={() => void pasteFromClipboard()}>
+                Paste clipboard
+              </button>
+              <button className="ghost-button" type="button" onClick={() => void sendRemoteCommand('enter')}>
+                Enter
+              </button>
+              <button className="ghost-button" type="button" onClick={() => void sendRemoteCommand('delete')}>
+                Delete
+              </button>
+            </div>
+          </section>
+        </div>
+      </section>
+    )
+  }
+
+  function renderAppsView() {
+    if (!isConnected) {
+      return (
+        <EmptyWorkspace
+          eyebrow="Apps"
+          title="No TV is connected yet"
+          detail="Connect with ADB in Setup before browsing installed apps."
+          actionLabel="Open setup"
+          onAction={() => setTab('setup')}
+        />
+      )
+    }
+
+    return (
+      <section className="workspace apps-workspace">
+        <section className="sheet apps-sheet">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Apps</p>
+              <h3>Launch installed apps</h3>
+              <p className="muted">Pinned and recent apps stay specific to the current TV.</p>
+            </div>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => void loadApps(true)}
+              disabled={appsAreLoading}
+            >
+              {activeAppsCache ? 'Refresh apps' : 'Fetch apps'}
+            </button>
+          </div>
+
+          {!capabilities.apps ? (
+            <div className="notice-band">
+              <div className="notice-copy">
+                <strong>Installed-app browsing needs ADB</strong>
+                <span>Go back to Setup and connect ADB for this TV.</span>
+              </div>
+            </div>
+          ) : (
+            <div className="apps-toolbar">
+              <div className={`apps-summary ${appsAreLoading ? 'loading' : ''}`}>
+                <strong>
+                  {appsAreLoading
+                    ? activeAppsCache
+                      ? 'Updating installed apps'
+                      : 'Fetching installed apps'
+                    : activeAppsCache
+                      ? 'Showing cached apps'
+                      : 'No app cache yet'}
+                </strong>
+                <span>
+                  {appsAreLoading
+                    ? 'The first pass can take a moment while names and icons are collected.'
+                    : activeAppsCache
+                      ? `Last updated ${formatTimestamp(activeAppsCache.updatedAt)}.`
+                      : 'Fetch once to build the installed-app list for this TV.'}
+                </span>
+              </div>
+
+              <div className="apps-controls">
+                <input
+                  value={appsQuery}
+                  onChange={(event) => setAppsQuery(event.target.value)}
+                  placeholder="Search apps"
+                  disabled={!capabilities.apps}
+                />
+                <div className="section-count">{visibleAppCount} visible</div>
+              </div>
+            </div>
+          )}
+
+          {visibleAppCount === 0 ? (
+            <div className="empty-inline">
+              <strong>
+                {capabilities.apps
+                  ? activeAppsCache
+                    ? 'No apps match that search.'
+                    : 'No installed apps cached yet.'
+                  : 'ADB is required for app discovery.'}
+              </strong>
+              <span>
+                {capabilities.apps
+                  ? activeAppsCache
+                    ? 'Try a broader search or refresh the installed-app list.'
+                    : 'Fetch installed apps to build the list for this TV.'
+                  : 'Connect with ADB first, then come back here.'}
+              </span>
+            </div>
+          ) : (
+            <div className="app-groups">
+              {renderAppSection('Pinned', appSections.favorites)}
+              {renderAppSection('Recent', appSections.recents)}
+              {renderAppSection('All apps', appSections.others)}
+            </div>
+          )}
+        </section>
+      </section>
+    )
+  }
+
   return (
     <div className="app-shell">
+      <div className="ambient ambient-one" aria-hidden="true" />
+      <div className="ambient ambient-two" aria-hidden="true" />
+
       <div className="toast-stack" aria-live="polite">
         {actionToasts.map((toast) => (
           <div key={toast.id} className={`toast-card tone-${feedbackTone(toast.status)}`}>
@@ -1158,69 +1989,41 @@ export function App() {
         ))}
       </div>
 
-      <aside className="app-sidebar">
-        <div className="sidebar-brand">
+      <header className="masthead">
+        <div className="brand-block">
           <p className="eyebrow">Android TV Remote</p>
-          <h1>Android TV Remote</h1>
-          <p className="lede">Start with ADB. Keep native optional. Make the current TV and next step obvious.</p>
+          <h1>Relay</h1>
+          <p className="masthead-copy">Dependable Android TV control with clean setup and fast access to remote and apps.</p>
         </div>
 
-        <nav className="view-switcher" aria-label="Views">
-          {viewTabs.map((item) => (
-            <button
-              key={item.id}
-              className={`view-switch-button ${tab === item.id ? 'active' : ''}`}
-              type="button"
-              onClick={() => setTab(item.id)}
-            >
-              <strong>{item.label}</strong>
-              <span>
-                {item.id === 'setup'
-                  ? 'Choose a TV and resolve what is blocking it'
-                  : item.id === 'remote'
-                    ? 'Control the connected TV and use keyboard mode'
-                    : 'Browse favorites, recents, and installed apps'}
-              </span>
-            </button>
-          ))}
-        </nav>
+        <div className="masthead-side">
+          <nav className="tab-nav" aria-label="Views">
+            {viewTabs.map((item) => (
+              <button
+                key={item.id}
+                className={`tab-button ${tab === item.id ? 'active' : ''}`}
+                type="button"
+                onClick={() => setTab(item.id)}
+                title={item.detail}
+              >
+                <strong>{item.label}</strong>
+              </button>
+            ))}
+          </nav>
 
-        <section className="panel sidebar-card">
-          <div className="section-header">
-            <div>
-              <p className="eyebrow">Current TV</p>
-              <h2>{activeDevice?.name ?? setupTargetName}</h2>
-            </div>
-            <div className={`status-pill tone-${statusTone(connectionState.status)}`}>{connectionState.status}</div>
-          </div>
-
-          <div className="selected-device-strip sidebar-target">
-            <span className="focus-label">Host</span>
-            <strong>{selectedHostLabel}</strong>
-            <span>{isConnected ? backendLabel(activeBackend) : preferredPathLabel}</span>
-          </div>
-
-          <div className="status-facts sidebar-facts">
-            <span>
-              <strong>Backend:</strong> {isConnected ? backendLabel(activeBackend) : preferredPathLabel}
-            </span>
-            <span>
-              <strong>ADB:</strong> {health?.adb.ready ? 'Ready' : capabilities.adbFallback ? 'Enabled' : 'Needs Setup'}
-            </span>
-            <span>
-              <strong>Current app:</strong> {foregroundApp?.displayName ?? 'Unknown'}
-            </span>
-          </div>
-
-          <div className="action-row">
+          <div className="masthead-actions">
             {isConnected ? (
               <>
-                <button className="primary-button" type="button" onClick={() => setTab('remote')}>
-                  Open remote
-                </button>
-                <button className="ghost-button" type="button" onClick={() => setTab('apps')}>
-                  Open apps
-                </button>
+                {tab !== 'remote' ? (
+                  <button className="ghost-button" type="button" onClick={() => setTab('remote')}>
+                    Remote
+                  </button>
+                ) : null}
+                {tab !== 'apps' ? (
+                  <button className="ghost-button" type="button" onClick={() => setTab('apps')}>
+                    Apps
+                  </button>
+                ) : null}
                 <button
                   className="ghost-button"
                   type="button"
@@ -1232,709 +2035,72 @@ export function App() {
               </>
             ) : (
               <>
-                <button className="primary-button" type="button" onClick={() => setTab('setup')}>
-                  Open setup
-                </button>
+                {tab !== 'setup' ? (
+                  <button className="primary-button" type="button" onClick={() => setTab('setup')}>
+                    Setup
+                  </button>
+                ) : null}
                 <button
                   className="ghost-button"
                   type="button"
                   onClick={() => void connectUsingSetup('adb')}
                   disabled={!hasSelectedTv || !form.adbEnabled || busy === 'connect'}
                 >
-                  {recommendedAdbLabel}
+                  {compactAdbLabel}
                 </button>
               </>
             )}
           </div>
+        </div>
+      </header>
 
-          <div className="activity-panel">
-            <div className="section-header compact-header">
-              <div>
-                <span className="focus-label">Action Center</span>
-                <h3>{latestAction?.title ?? 'No recent actions yet'}</h3>
-              </div>
-              {latestAction ? (
-                <div className={`status-pill tone-${feedbackTone(latestAction.status)}`}>{latestAction.status}</div>
-              ) : null}
-            </div>
-            <p className="muted">{latestAction?.detail ?? statusMessage}</p>
-            {actionFeed.length > 0 ? (
-              <div className="activity-list">
-                {actionFeed.slice(0, 5).map((action) => (
-                  <div key={action.id} className={`activity-item tone-${feedbackTone(action.status)}`}>
-                    <strong>{action.title}</strong>
-                    <span>{action.detail}</span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
+      <section className="status-band">
+        <div className="status-band-head">
+          <div className="status-pill-row">
+            <span className={`status-pill tone-${statusTone(connectionState.status)}`}>
+              {formatConnectionStatus(connectionState.status)}
+            </span>
+            <span className="status-pill tone-neutral">{activeView.label}</span>
+            <span className="status-pill tone-neutral">
+              {isConnected ? backendLabel(activeBackend) : `Preferred: ${preferredPathLabel}`}
+            </span>
+            {waitingForNativeCode ? <span className="status-pill tone-warning">Native pairing pending</span> : null}
           </div>
-        </section>
+        </div>
 
-      </aside>
-
-      <main className="app-main">
-        <section className="panel status-strip hero-panel">
-          <div className="status-strip-copy">
-            <p className="eyebrow">{currentView.eyebrow}</p>
-            <h2>{currentView.title}</h2>
-            <p className="muted">{currentView.description}</p>
-            <div className="hero-status">
-              <strong>{heroTitle}</strong>
-              <span className="muted">{heroDetail}</span>
-            </div>
-            {renderRecommendedButtons()}
+        <div className="status-card-grid">
+          <div className="status-card status-card-hero">
+            <span className="focus-label">{viewStatus.eyebrow}</span>
+            <strong>{viewStatus.title}</strong>
+            <small>{viewStatus.detail}</small>
           </div>
-
-          <div className="status-strip-side">
-            <div className="status-facts hero-facts hero-health-grid">
-              <span>
-                <strong>TV:</strong> {activeDevice?.name ?? setupTargetName}
-              </span>
-              <span>
-                <strong>Host:</strong> {selectedHostLabel}
-              </span>
-              <span>
-                <strong>Path:</strong> {isConnected ? backendLabel(activeBackend) : preferredPathLabel}
-              </span>
-              <span>
-                <strong>ADB last success:</strong> {formatTimestamp(activeDevice?.backendHealth?.adb.lastConnectedAt)}
-              </span>
-              <span>
-                <strong>Native last success:</strong> {formatTimestamp(activeDevice?.backendHealth?.native.lastConnectedAt)}
-              </span>
-              <span>
-                <strong>Foreground app:</strong> {foregroundApp?.displayName ?? 'Unavailable'}
-              </span>
-            </div>
-
-            {quickActions.length > 0 ? (
-              <div className="quick-action-panel">
-                <div className="section-header compact-header">
-                  <h3>Quick Actions</h3>
-                  <span>Reliable shortcuts</span>
-                </div>
-                <div className="quick-action-grid">
-                  {quickActions.map((action) => (
-                    <button
-                      key={action.id}
-                      className="ghost-button quick-action-button"
-                      type="button"
-                      onClick={() => void runQuickAction(action.id)}
-                      disabled={action.disabled || pendingQuickActionId === action.id}
-                      title={action.detail}
-                    >
-                      <strong>{getQuickActionLabel(action)}</strong>
-                      <span>{action.detail}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
+          <div className="status-card">
+            <span className="focus-label">TV</span>
+            <strong>{activeDevice?.name ?? setupTargetName}</strong>
+            <small>{selectedHostLabel}</small>
           </div>
-        </section>
+          <div className="status-card">
+            <span className="focus-label">ADB</span>
+            <strong>{getBackendHealthLabel(health?.adb, diagnostics?.adb.available ? 'Not ready' : 'Unavailable')}</strong>
+            <small>{diagnostics?.adb.available ? diagnostics.adb.version ?? 'ADB detected' : 'Install ADB to continue'}</small>
+          </div>
+          <div className="status-card">
+            <span className="focus-label">{supportStatus.label}</span>
+            <strong>{supportStatus.title}</strong>
+            <small>{supportStatus.detail}</small>
+          </div>
+          <div className="status-card status-card-live">
+            <span className="focus-label">Live status</span>
+            <strong>{liveStatusTitle}</strong>
+            <small>{liveStatusDetail}</small>
+          </div>
+        </div>
+      </section>
 
-        {tab === 'setup' && (
-          <section className="content-grid setup-layout">
-            <div className="page-stack">
-              <section className="panel section-block">
-                <div className="section-header">
-                  <div>
-                    <p className="eyebrow">1. Choose TV</p>
-                    <h2>Pick a saved TV, a nearby TV, or type one in</h2>
-                  </div>
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => void scanNativeDevices()}
-                    disabled={busy === 'discover'}
-                  >
-                    Refresh discovery
-                  </button>
-                </div>
-
-                {devices.length > 0 ? (
-                  <div className="list-block">
-                    <p className="list-label">Saved TVs</p>
-                    <div className="simple-list">
-                      {devices.map((device) => (
-                        <div
-                          key={device.id}
-                          className={`list-item ${savedSelectedDevice?.id === device.id ? 'active' : ''}`}
-                        >
-                          <div className="list-item-copy">
-                            <strong>{device.name}</strong>
-                            <span>{device.host}</span>
-                            <small>
-                              {device.lastConnectedAt
-                                ? `${device.lastConnectedBackend ?? 'unknown'} · ${formatTimestamp(device.lastConnectedAt)}`
-                                : 'Not connected yet'}
-                            </small>
-                          </div>
-                          <div className="list-item-actions">
-                            <button className="ghost-button" type="button" onClick={() => selectSavedDevice(device)}>
-                              Load
-                            </button>
-                            <button
-                              className="ghost-button"
-                              type="button"
-                              onClick={() => void connectSavedDevice(device)}
-                              disabled={busy === `connect-${device.id}`}
-                            >
-                              Connect
-                            </button>
-                            <button
-                              className="ghost-button danger-button"
-                              type="button"
-                              onClick={() => void deleteSavedDevice(device)}
-                              disabled={busy === `delete-${device.id}`}
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-
-                <div className="list-block">
-                  <p className="list-label">Nearby TVs</p>
-                  {discoveredDevices.length === 0 ? (
-                    <p className="muted">Discovery is optional. If nothing appears here, just type the host or IP below.</p>
-                  ) : (
-                    <div className="simple-list">
-                      {discoveredDevices.map((device) => (
-                        <div
-                          key={`${device.host}:${device.remotePort}`}
-                          className={`list-item ${form.host === device.host ? 'active' : ''}`}
-                        >
-                          <div className="list-item-copy">
-                            <strong>{device.name}</strong>
-                            <span>{device.host}</span>
-                            <small>Native remote {device.remotePort} · Pair {device.pairingPort}</small>
-                          </div>
-                          <div className="list-item-actions">
-                            <button className="ghost-button" type="button" onClick={() => applyDiscoveredDevice(device)}>
-                              Use TV
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="field-row">
-                  <label>
-                    Friendly name
-                    <input
-                      value={form.name}
-                      onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                      placeholder="Bedroom TV"
-                    />
-                  </label>
-                  <label>
-                    Host / IP
-                    <input
-                      value={form.host}
-                      onChange={(event) => setForm((current) => ({ ...current, host: event.target.value }))}
-                      placeholder="192.168.1.35"
-                    />
-                  </label>
-                </div>
-
-                <div className="selected-device-strip">
-                  <span className="focus-label">Current target</span>
-                  <strong>{hasSelectedTv ? setupTargetName : 'No TV selected yet'}</strong>
-                  <span>{hasSelectedTv ? selectedHostLabel : 'Pick a TV above or type the host manually.'}</span>
-                </div>
-
-                <div className="action-row">
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => void saveSetup()}
-                    disabled={busy === 'save' || !hasSelectedTv}
-                  >
-                    Save TV profile
-                  </button>
-                </div>
-              </section>
-
-              <section className="panel section-block info-block">
-                <div className="section-header">
-                  <div>
-                    <p className="eyebrow">ADB Troubleshooter</p>
-                    <h2>Make failure states concrete</h2>
-                  </div>
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => void runAdbTroubleshooter()}
-                    disabled={busy === 'troubleshoot' || !hasSelectedTv}
-                  >
-                    Run checks
-                  </button>
-                </div>
-                {!diagnostics?.adb.available ? (
-                  <p className="warning-copy">{diagnostics?.adb.installHint}</p>
-                ) : (
-                  <p className="muted">
-                    {diagnostics.adb.version} · {diagnostics.adb.path}
-                  </p>
-                )}
-                {health ? (
-                  <div className="health-panel">
-                    <div className="health-summary">
-                      <strong>{health.summary}</strong>
-                      <span>{health.detail}</span>
-                    </div>
-                    <div className="health-grid">
-                      <div className="health-card">
-                        <span className="focus-label">ADB</span>
-                        <strong>{health.adb.ready ? 'Ready' : health.adb.available ? 'Needs attention' : 'Unavailable'}</strong>
-                        <span>{health.adb.lastError ?? `Last success ${formatTimestamp(health.adb.lastConnectedAt)}`}</span>
-                      </div>
-                      <div className="health-card">
-                        <span className="focus-label">Native</span>
-                        <strong>{health.native.ready ? 'Ready' : health.native.available ? 'Optional' : 'Not configured'}</strong>
-                        <span>{health.native.lastError ?? `Last success ${formatTimestamp(health.native.lastConnectedAt)}`}</span>
-                      </div>
-                    </div>
-                    <div className="issue-list">
-                      {health.issues.map((issue) => (
-                        <div key={issue.code} className={`issue-row issue-${issue.severity}`}>
-                          <strong>{issue.summary}</strong>
-                          <span>{issue.detail}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <p className="muted">Choose a TV first to see per-device health and troubleshooting steps.</p>
-                )}
-              </section>
-            </div>
-
-            <div className="page-stack">
-              <section className="panel section-block section-primary">
-                <div className="section-header">
-                  <div>
-                    <p className="eyebrow">2. Recommended</p>
-                    <h2>Connect with ADB</h2>
-                  </div>
-                  <span className="section-chip">Most reliable</span>
-                </div>
-                <p className="muted">
-                  Use this first. It is the path this app handles best and it enables typing plus installed apps.
-                </p>
-
-                <label className="toggle-row">
-                  <input
-                    type="checkbox"
-                    checked={form.adbEnabled}
-                    onChange={(event) => setForm((current) => ({ ...current, adbEnabled: event.target.checked }))}
-                  />
-                  <span>Enable ADB for this TV</span>
-                </label>
-
-                <div className="field-row">
-                  <label>
-                    ADB mode
-                    <select
-                      value={form.adbMode}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          adbMode: event.target.value as 'pair' | 'connect'
-                        }))
-                      }
-                      disabled={!form.adbEnabled}
-                    >
-                      <option value="connect">Direct connect</option>
-                      <option value="pair">Pair then connect</option>
-                    </select>
-                  </label>
-                  <label>
-                    ADB connect port
-                    <input
-                      value={form.connectPort}
-                      onChange={(event) => setForm((current) => ({ ...current, connectPort: event.target.value }))}
-                      placeholder="5555"
-                      disabled={!form.adbEnabled}
-                    />
-                  </label>
-                </div>
-
-                {form.adbMode === 'pair' ? (
-                  <div className="field-row">
-                    <label>
-                      ADB pair port
-                      <input
-                        value={form.adbPairPort}
-                        onChange={(event) => setForm((current) => ({ ...current, adbPairPort: event.target.value }))}
-                        placeholder="37099"
-                        disabled={!form.adbEnabled}
-                      />
-                    </label>
-                    <label>
-                      ADB pair code
-                      <input
-                        value={form.adbPairCode}
-                        onChange={(event) => setForm((current) => ({ ...current, adbPairCode: event.target.value }))}
-                        placeholder="654321"
-                        disabled={!form.adbEnabled}
-                      />
-                    </label>
-                  </div>
-                ) : null}
-
-                <div className="action-row">
-                  {form.adbMode === 'pair' ? (
-                    <button
-                      className="primary-button"
-                      type="button"
-                      onClick={() => void pairAdb()}
-                      disabled={!form.adbEnabled || busy === 'adb-pair' || !hasSelectedTv || !form.adbPairCode.trim()}
-                    >
-                      Pair ADB and connect
-                    </button>
-                  ) : (
-                    <button
-                      className="primary-button"
-                      type="button"
-                      onClick={() => void connectUsingSetup('adb')}
-                      disabled={!form.adbEnabled || busy === 'connect' || !hasSelectedTv}
-                    >
-                      Connect with ADB
-                    </button>
-                  )}
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => setForm((current) => ({ ...current, preferredBackend: 'adb' }))}
-                  >
-                    Make ADB the default
-                  </button>
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => void saveSetup('adb')}
-                    disabled={busy === 'save' || !hasSelectedTv}
-                  >
-                    Save ADB settings
-                  </button>
-                </div>
-
-                <p className="muted">
-                  If Wireless Debugging is already paired on the TV, use Direct connect. Otherwise use Pair then connect.
-                </p>
-              </section>
-
-              <section className="panel section-block section-secondary">
-                <div className="section-header">
-                  <div>
-                    <p className="eyebrow">3. Optional</p>
-                    <h2>Try native remote</h2>
-                  </div>
-                  <span className="section-chip section-chip-muted">Less reliable</span>
-                </div>
-                <p className="muted">
-                  This path is fully manual now. It does not start during a normal connect, and it should stay secondary to ADB.
-                </p>
-
-                <div className="activity-panel native-setup-panel">
-                  <div className="section-header compact-header">
-                    <div>
-                      <span className="focus-label">Native status</span>
-                      <h3>{nativeSetupState.title}</h3>
-                    </div>
-                    <div className={`status-pill tone-${nativeSetupState.tone}`}>{nativeSetupState.badge}</div>
-                  </div>
-                  <p className="muted">{nativeSetupState.detail}</p>
-                  {setupDevice?.backendHealth?.native.lastConnectedAt ? (
-                    <span className="muted">
-                      Last successful native session: {formatTimestamp(setupDevice.backendHealth.native.lastConnectedAt)}
-                    </span>
-                  ) : null}
-                </div>
-
-                <div className="field-row">
-                  <label>
-                    Native remote port
-                    <input
-                      value={form.nativeRemotePort}
-                      onChange={(event) => setForm((current) => ({ ...current, nativeRemotePort: event.target.value }))}
-                      placeholder="6466"
-                    />
-                  </label>
-                  <label>
-                    Native pairing port
-                    <input
-                      value={form.nativePairingPort}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, nativePairingPort: event.target.value }))
-                      }
-                      placeholder="6467"
-                    />
-                  </label>
-                </div>
-
-                {renderNativePairingPanel()}
-
-                <div className="action-row">
-                  <button
-                    className="primary-button"
-                    type="button"
-                    onClick={() => void beginNativePairing()}
-                    disabled={busy === 'native-pair' || !hasSelectedTv || waitingForNativeCode}
-                  >
-                    {nativePaired ? 'Pair native again' : 'Start native pairing'}
-                  </button>
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => void connectUsingSetup('native')}
-                    disabled={busy === 'connect' || !nativePaired || !hasSelectedTv}
-                  >
-                    Connect with saved native pairing
-                  </button>
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => setForm((current) => ({ ...current, preferredBackend: 'native' }))}
-                  >
-                    Make native the default
-                  </button>
-                </div>
-
-                <p className="muted">
-                  Start pairing only when you want to try native. If the TV does not show a code or never accepts it, cancel
-                  and go back to ADB.
-                </p>
-              </section>
-            </div>
-          </section>
-        )}
-
-        {tab === 'remote' &&
-          (isConnected ? (
-            <section className="content-grid remote-layout">
-              <div className="page-stack">
-                <section className="panel controls-panel">
-                  <div className="panel-heading">
-                    <h2>Navigate</h2>
-                    <span>Arrow keys and Enter work here too.</span>
-                  </div>
-                  <div className="dpad">
-                    <button type="button" className="dpad-btn up" onClick={() => void sendRemoteCommand('up')}>
-                      Up
-                    </button>
-                    <button type="button" className="dpad-btn left" onClick={() => void sendRemoteCommand('left')}>
-                      Left
-                    </button>
-                    <button
-                      type="button"
-                      className="dpad-btn select"
-                      onClick={() => void sendRemoteCommand('select')}
-                    >
-                      OK
-                    </button>
-                    <button type="button" className="dpad-btn right" onClick={() => void sendRemoteCommand('right')}>
-                      Right
-                    </button>
-                    <button type="button" className="dpad-btn down" onClick={() => void sendRemoteCommand('down')}>
-                      Down
-                    </button>
-                  </div>
-                </section>
-
-                <section className="panel controls-panel">
-                  <div className="panel-heading">
-                    <h2>Controls</h2>
-                    <span>{activeBackend === 'native' ? 'Using native remote.' : 'Using ADB.'}</span>
-                  </div>
-                  <div className="button-grid">
-                    {remoteButtons.map((button) => (
-                      <button
-                        key={button.command}
-                        type="button"
-                        className={`remote-button ${button.accent ? 'accent' : ''} ${pendingRemoteCommand === button.command ? 'is-pending' : ''} ${commandCooldownRemaining(button.command) > 0 ? 'is-cooling-down' : ''}`}
-                        onClick={() => void sendRemoteCommand(button.command)}
-                        disabled={
-                          !isConnected ||
-                          pendingRemoteCommand === button.command ||
-                          commandCooldownRemaining(button.command) > 0
-                        }
-                      >
-                        {renderRemoteButtonCopy(button)}
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              </div>
-
-              <div className="page-stack">
-                <section className="panel shortcut-panel">
-                  <div className="panel-heading">
-                    <h2>Keyboard Mode</h2>
-                    <span>Only active on the Remote tab, and never while typing into an input.</span>
-                  </div>
-                  <div className="shortcut-grid">
-                    {shortcutLegend.map((shortcut) => (
-                      <div key={shortcut.keys} className="shortcut-card">
-                        <strong>{shortcut.keys}</strong>
-                        <span>{shortcut.action}</span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-
-                <section className="panel text-panel">
-                  <div className="panel-heading">
-                    <h2>Type remotely</h2>
-                    <span>
-                      {activeBackend === 'native'
-                        ? capabilities.typing
-                          ? 'Text input will use ADB fallback.'
-                          : 'ADB is required for text input.'
-                        : 'Text input is ready.'}
-                    </span>
-                  </div>
-                  {!capabilities.typing ? (
-                    <div className="callout">Text entry needs ADB. Go back to Setup and connect or pair ADB for this TV.</div>
-                  ) : null}
-                  <textarea
-                    value={textInput}
-                    onChange={(event) => setTextInput(event.target.value)}
-                    placeholder="Type something to send to the TV..."
-                  />
-                  <div className="action-row">
-                    <button
-                      className="primary-button"
-                      type="button"
-                      onClick={() => void sendText()}
-                      disabled={busy === 'text' || !textInput || !capabilities.typing}
-                    >
-                      Send text
-                    </button>
-                    <button className="ghost-button" type="button" onClick={() => setTextInput('')}>
-                      Clear
-                    </button>
-                    <button className="ghost-button" type="button" onClick={() => void pasteFromClipboard()}>
-                      Paste clipboard
-                    </button>
-                    <button className="ghost-button" type="button" onClick={() => void sendRemoteCommand('enter')}>
-                      Enter
-                    </button>
-                    <button className="ghost-button" type="button" onClick={() => void sendRemoteCommand('delete')}>
-                      Delete
-                    </button>
-                  </div>
-                </section>
-              </div>
-            </section>
-          ) : (
-            <section className="panel empty-state">
-              <p className="eyebrow">Remote</p>
-              <h2>No TV is connected yet</h2>
-              <p className="muted">Go to Setup and connect with ADB first. That path is still the most reliable here.</p>
-              <div className="action-row">
-                <button className="primary-button" type="button" onClick={() => setTab('setup')}>
-                  Open setup
-                </button>
-              </div>
-            </section>
-          ))}
-
-        {tab === 'apps' &&
-          (isConnected ? (
-            <section className="page-stack">
-              <section className="panel section-block">
-                <div className="section-header">
-                  <div>
-                    <p className="eyebrow">Apps</p>
-                    <h2>Launch installed apps</h2>
-                  </div>
-                  <div className="action-row compact">
-                    <button
-                      className="ghost-button"
-                      type="button"
-                      onClick={() => void loadApps(true)}
-                      disabled={appsAreLoading}
-                    >
-                      {activeAppsCache ? 'Update installed apps' : 'Fetch installed apps'}
-                    </button>
-                  </div>
-                </div>
-
-                {!capabilities.apps ? (
-                  <div className="callout">Installed-app browsing needs ADB. Go back to Setup and connect ADB for this TV.</div>
-                ) : null}
-
-                {capabilities.apps ? (
-                  <div className={`apps-status-bar ${appsAreLoading ? 'loading' : ''}`}>
-                    <div className="apps-status-copy">
-                      <strong>
-                        {appsAreLoading
-                          ? activeAppsCache
-                            ? 'Updating installed apps for this TV'
-                            : 'Fetching installed apps for this TV'
-                          : activeAppsCache
-                            ? 'Showing saved app groups for this TV'
-                            : 'No installed-app cache yet'}
-                      </strong>
-                      <span>
-                        {appsAreLoading
-                          ? 'This can take a bit when the app is collecting friendly names and icons.'
-                          : activeAppsCache
-                            ? `Last updated ${formatTimestamp(activeAppsCache.updatedAt)}. Favorites and recents are stored per TV.`
-                            : 'The first fetch builds and stores the installed-app list for this saved TV.'}
-                      </span>
-                    </div>
-                    <div className="apps-status-track" aria-hidden="true">
-                      <div className="apps-status-fill" />
-                    </div>
-                  </div>
-                ) : null}
-
-                <input
-                  value={appsQuery}
-                  onChange={(event) => setAppsQuery(event.target.value)}
-                  placeholder="Search apps"
-                  disabled={!capabilities.apps}
-                />
-
-                {visibleAppCount === 0 ? (
-                  <p className="muted">
-                    {capabilities.apps
-                      ? activeAppsCache
-                        ? 'No pinned, recent, or cached apps match that search.'
-                        : 'No installed apps cached yet. Fetch installed apps to build the list for this TV.'
-                      : 'ADB is required for app discovery.'}
-                  </p>
-                ) : (
-                  <>
-                    {renderAppSection('Favorites', appSections.favorites)}
-                    {renderAppSection('Recent', appSections.recents)}
-                    {renderAppSection('All Apps', appSections.others)}
-                  </>
-                )}
-              </section>
-            </section>
-          ) : (
-            <section className="panel empty-state">
-              <p className="eyebrow">Apps</p>
-              <h2>No TV is connected yet</h2>
-              <p className="muted">Connect with ADB in Setup before browsing installed apps.</p>
-              <div className="action-row">
-                <button className="primary-button" type="button" onClick={() => setTab('setup')}>
-                  Open setup
-                </button>
-              </div>
-            </section>
-          ))}
+      <main className="workspace-shell">
+        {tab === 'setup' ? renderSetupView() : null}
+        {tab === 'remote' ? renderRemoteView() : null}
+        {tab === 'apps' ? renderAppsView() : null}
       </main>
     </div>
   )

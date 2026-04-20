@@ -6,11 +6,12 @@ import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import pkg from 'node-apk'
 import type { Apk as ApkType, Resource, Resources } from 'node-apk'
-import type { LaunchableApp } from '@shared/types'
+import type { DiscoveredAdbService, LaunchableApp } from '@shared/types'
 import {
   buildSerial,
   chunkAdbText,
   deriveConnectionState,
+  parseAdbMdnsServices,
   parseForegroundApp,
   parseAdbDevices,
   parseAdbVersion,
@@ -59,6 +60,24 @@ export class AdbClient {
     if (!joined.includes('connected to') && !joined.includes('already connected')) {
       throw new Error((stdout || stderr || 'Unable to connect to device.').trim())
     }
+  }
+
+  async killServer(): Promise<void> {
+    await this.runRaw(['kill-server'], { timeoutMs: 5_000 })
+  }
+
+  async startServer(): Promise<void> {
+    await this.runRaw(['start-server'], { timeoutMs: 8_000 })
+  }
+
+  async restartServer(): Promise<void> {
+    await this.killServer()
+    await this.startServer()
+  }
+
+  async listMdnsServices(): Promise<DiscoveredAdbService[]> {
+    const { stdout } = await this.runRaw(['mdns', 'services'], { timeoutMs: 8_000 })
+    return parseAdbMdnsServices(stdout)
   }
 
   async disconnect(serial?: string): Promise<void> {

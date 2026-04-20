@@ -57,6 +57,11 @@ export function registerIpc(options: RegisterIpcOptions): void {
 
   ipcMain.handle(IPC_CHANNELS.devicesDiscoverNative, () => deviceManager.discoverNativeDevices())
 
+  ipcMain.handle(IPC_CHANNELS.devicesDiscoverAdb, async (_event, host?: string) => {
+    const adbInfo = await adbLocator.locate()
+    return adbInfo.available ? deviceManager.discoverAdbEndpoints(host) : []
+  })
+
   ipcMain.handle(IPC_CHANNELS.devicesConnect, (_event, input: ConnectDeviceInput) => deviceManager.connectDevice(input))
 
   ipcMain.handle(IPC_CHANNELS.devicesDisconnect, () => deviceManager.disconnectActiveDevice())

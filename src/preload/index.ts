@@ -10,6 +10,7 @@ const api: TvRemoteApi = {
   beginNativePairing: (input) => ipcRenderer.invoke(IPC_CHANNELS.devicesBeginNativePairing, input),
   completeNativePairing: (input) => ipcRenderer.invoke(IPC_CHANNELS.devicesCompleteNativePairing, input),
   discoverNativeDevices: () => ipcRenderer.invoke(IPC_CHANNELS.devicesDiscoverNative),
+  discoverAdbEndpoints: (host) => ipcRenderer.invoke(IPC_CHANNELS.devicesDiscoverAdb, host),
   connectDevice: (input) => ipcRenderer.invoke(IPC_CHANNELS.devicesConnect, input),
   disconnectDevice: () => ipcRenderer.invoke(IPC_CHANNELS.devicesDisconnect),
   sendRemoteCommand: (command) => ipcRenderer.invoke(IPC_CHANNELS.remoteSendKey, command),

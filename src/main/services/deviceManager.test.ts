@@ -36,6 +36,7 @@ function createNativeRemoteService(overrides?: Partial<NativeRemoteService>): Na
 describe('DeviceManager', () => {
   it('updates last connection and health when adb connect succeeds', async () => {
     const adbClient = {
+      listMdnsServices: vi.fn().mockResolvedValue([]),
       connect: vi.fn().mockResolvedValue(undefined),
       getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-1' })
     } as unknown as AdbClient
@@ -57,8 +58,98 @@ describe('DeviceManager', () => {
     manager.dispose()
   })
 
+  it('does not save a new tv profile when an unsaved adb connect attempt fails', async () => {
+    const adbClient = {
+      listMdnsServices: vi.fn().mockResolvedValue([]),
+      connect: vi.fn().mockRejectedValue(new Error('failed to connect to 192.168.1.8:5555: No route to host')),
+      getConnectionState: vi.fn()
+    } as unknown as AdbClient
+
+    const manager = new DeviceManager(createStore(), adbClient, createNativeRemoteService())
+    await manager.init()
+
+    await expect(
+      manager.connectDevice({
+        name: 'Office TV',
+        host: '192.168.1.8',
+        connectPort: 5555,
+        mode: 'connect'
+      })
+    ).rejects.toThrow(/Pair then connect/)
+
+    expect(manager.listDevices()).toHaveLength(0)
+    expect(manager.getActiveDevice()).toBeNull()
+    manager.dispose()
+  })
+
+  it('recommends adb pairing when direct connect fails on port 5555', async () => {
+    const adbClient = {
+      listMdnsServices: vi.fn().mockResolvedValue([]),
+      connect: vi.fn().mockRejectedValue(new Error("failed to connect to '192.168.1.8:5555': No route to host")),
+      getConnectionState: vi.fn(),
+      listDevices: vi.fn().mockResolvedValue([])
+    } as unknown as AdbClient
+
+    const manager = new DeviceManager(createStore(), adbClient, createNativeRemoteService())
+    await manager.init()
+    await manager.saveDevice({
+      id: 'tv-connect',
+      name: 'Office TV',
+      host: '192.168.1.8',
+      connectPort: 5555,
+      mode: 'connect',
+      adbEnabled: true
+    })
+    await manager.connectDevice({ id: 'tv-connect' }).catch(() => undefined)
+
+    const health = await manager.runAdbTroubleshooting(true)
+
+    expect(health?.issues[0]?.code).toBe('adb_connect_failed')
+    expect(health?.detail).toContain('Pair then connect')
+    expect(health?.recommendedActions).toContain('pair_adb')
+    manager.dispose()
+  })
+
+  it('upserts the existing tv profile when saving the same host again without an id', async () => {
+    const manager = new DeviceManager(
+      createStore({
+        savedDevices: [
+          {
+            id: 'tv-existing',
+            name: 'Living Room',
+            host: '192.168.1.20',
+            connectPort: 5555,
+            mode: 'connect',
+            favorites: ['com.netflix.ninja']
+          }
+        ]
+      }),
+      {} as AdbClient,
+      createNativeRemoteService()
+    )
+
+    await manager.init()
+    const saved = await manager.saveDevice({
+      name: 'Living Room Updated',
+      host: '192.168.1.20',
+      connectPort: 5560,
+      mode: 'connect'
+    })
+
+    expect(saved.id).toBe('tv-existing')
+    expect(manager.listDevices()).toHaveLength(1)
+    expect(manager.listDevices()[0]).toMatchObject({
+      id: 'tv-existing',
+      name: 'Living Room Updated',
+      connectPort: 5560,
+      favorites: ['com.netflix.ninja']
+    })
+    manager.dispose()
+  })
+
   it('retries reconnect during adb health checks when device drops', async () => {
     const adbClient = {
+      listMdnsServices: vi.fn().mockResolvedValue([]),
       connect: vi.fn().mockResolvedValue(undefined),
       getConnectionState: vi
         .fn()
@@ -93,6 +184,7 @@ describe('DeviceManager', () => {
     })
 
     const adbClient = {
+      listMdnsServices: vi.fn().mockResolvedValue([]),
       connect: vi.fn(),
       getConnectionState: vi.fn()
     } as unknown as AdbClient
@@ -128,6 +220,7 @@ describe('DeviceManager', () => {
     })
 
     const adbClient = {
+      listMdnsServices: vi.fn().mockResolvedValue([]),
       connect: vi.fn().mockResolvedValue(undefined),
       getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-3' })
     } as unknown as AdbClient
@@ -162,6 +255,7 @@ describe('DeviceManager', () => {
     })
 
     const adbClient = {
+      listMdnsServices: vi.fn().mockResolvedValue([]),
       connect: vi.fn().mockResolvedValue(undefined),
       getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-unpaired-native' })
     } as unknown as AdbClient
@@ -200,6 +294,7 @@ describe('DeviceManager', () => {
     })
 
     const adbClient = {
+      listMdnsServices: vi.fn().mockResolvedValue([]),
       connect: vi.fn(),
       getConnectionState: vi.fn()
     } as unknown as AdbClient
@@ -247,6 +342,7 @@ describe('DeviceManager', () => {
 
   it('persists favorites and recent app launches per tv', async () => {
     const adbClient = {
+      listMdnsServices: vi.fn().mockResolvedValue([]),
       connect: vi.fn().mockResolvedValue(undefined),
       getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-5' })
     } as unknown as AdbClient
@@ -277,6 +373,7 @@ describe('DeviceManager', () => {
 
   it('classifies missing adb and recommends next actions', async () => {
     const adbClient = {
+      listMdnsServices: vi.fn().mockResolvedValue([]),
       connect: vi.fn().mockResolvedValue(undefined),
       getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-6' })
     } as unknown as AdbClient
@@ -300,6 +397,7 @@ describe('DeviceManager', () => {
 
   it('classifies adb pair required when the tv expects pairing', async () => {
     const adbClient = {
+      listMdnsServices: vi.fn().mockResolvedValue([]),
       connect: vi.fn().mockRejectedValue(new Error('failed')),
       getConnectionState: vi.fn().mockResolvedValue({ status: 'disconnected', deviceId: 'tv-7' }),
       listDevices: vi.fn().mockResolvedValue([])
@@ -327,6 +425,7 @@ describe('DeviceManager', () => {
 
   it('classifies unauthorized adb during troubleshooting', async () => {
     const adbClient = {
+      listMdnsServices: vi.fn().mockResolvedValue([]),
       connect: vi.fn().mockResolvedValue(undefined),
       getConnectionState: vi.fn().mockResolvedValue({ status: 'unauthorized', deviceId: 'tv-8' }),
       listDevices: vi
@@ -362,6 +461,7 @@ describe('DeviceManager', () => {
       })
     })
     const adbClient = {
+      listMdnsServices: vi.fn().mockResolvedValue([]),
       connect: vi.fn().mockResolvedValue(undefined),
       getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-9' })
     } as unknown as AdbClient
@@ -386,6 +486,72 @@ describe('DeviceManager', () => {
 
     expect(health?.issues.some((issue) => issue.code === 'native_pairing_stalled')).toBe(true)
     expect(health?.recommendedActions).toContain('switch_to_adb')
+    manager.dispose()
+  })
+
+  it('prefers the live adb mdns connect port over a stale saved port', async () => {
+    const adbClient = {
+      listMdnsServices: vi.fn().mockResolvedValue([
+        {
+          name: 'adb-tv-TnSdi9',
+          host: '192.168.1.22',
+          port: 44643,
+          serviceType: 'connect'
+        }
+      ]),
+      connect: vi.fn().mockResolvedValue(undefined),
+      getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-mdns' })
+    } as unknown as AdbClient
+
+    const manager = new DeviceManager(
+      createStore({
+        savedDevices: [
+          {
+            id: 'tv-mdns',
+            name: 'Office TV',
+            host: '192.168.1.22',
+            connectPort: 5555,
+            mode: 'connect',
+            adbEnabled: true
+          }
+        ]
+      }),
+      adbClient,
+      createNativeRemoteService()
+    )
+
+    await manager.init()
+    await manager.connectDevice({ id: 'tv-mdns' })
+
+    expect(adbClient.connect).toHaveBeenCalledWith('192.168.1.22', 44643)
+    expect(manager.getActiveDevice()?.connectPort).toBe(44643)
+    manager.dispose()
+  })
+
+  it('restarts the adb server once and retries when connect hits a stale local server error', async () => {
+    const adbClient = {
+      listMdnsServices: vi.fn().mockResolvedValue([]),
+      restartServer: vi.fn().mockResolvedValue(undefined),
+      connect: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("failed to connect to '192.168.1.25:5555': No route to host"))
+        .mockResolvedValueOnce(undefined),
+      getConnectionState: vi.fn().mockResolvedValue({ status: 'connected', deviceId: 'tv-retry' })
+    } as unknown as AdbClient
+
+    const manager = new DeviceManager(createStore(), adbClient, createNativeRemoteService())
+    await manager.init()
+    const state = await manager.connectDevice({
+      id: 'tv-retry',
+      name: 'Bedroom TV',
+      host: '192.168.1.25',
+      connectPort: 5555,
+      mode: 'connect'
+    })
+
+    expect(state.status).toBe('connected')
+    expect(adbClient.restartServer).toHaveBeenCalledTimes(1)
+    expect(adbClient.connect).toHaveBeenCalledTimes(2)
     manager.dispose()
   })
 })

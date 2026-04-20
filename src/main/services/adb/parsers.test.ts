@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   chunkAdbText,
   deriveConnectionState,
+  parseAdbMdnsServices,
   parseForegroundApp,
   parseAdbDevices,
   parseLaunchableApps,
@@ -20,6 +21,36 @@ describe('adb parsers', () => {
     expect(parsed).toEqual([
       { serial: '192.168.1.2:5555', state: 'device' },
       { serial: '192.168.1.3:5555', state: 'unauthorized' }
+    ])
+  })
+
+  it('parses adb mdns services output', () => {
+    const parsed = parseAdbMdnsServices(`
+      List of discovered mdns services
+      adb-14141FDF600081-QXjCrW  _adb-tls-pairing._tcp  192.168.86.38:33861
+      adb-14141FDF600081-TnSdi9  _adb-tls-connect._tcp  192.168.86.38:33015
+      adb-legacy                 _adb._tcp              192.168.86.38:5555
+    `)
+
+    expect(parsed).toEqual([
+      {
+        name: 'adb-14141FDF600081-QXjCrW',
+        host: '192.168.86.38',
+        port: 33861,
+        serviceType: 'pairing'
+      },
+      {
+        name: 'adb-14141FDF600081-TnSdi9',
+        host: '192.168.86.38',
+        port: 33015,
+        serviceType: 'connect'
+      },
+      {
+        name: 'adb-legacy',
+        host: '192.168.86.38',
+        port: 5555,
+        serviceType: 'legacy'
+      }
     ])
   })
 

@@ -12,6 +12,7 @@ import type {
   PairDeviceInput,
   QuickAction,
   RemoteCommand,
+  ResolvedAdbEndpoints,
   SaveDeviceInput,
   SavedDevice,
   SendTextInput
@@ -25,6 +26,7 @@ export interface TvRemoteApi {
   beginNativePairing: (input: BeginNativePairingInput) => Promise<ConnectionState>
   completeNativePairing: (input: CompleteNativePairingInput) => Promise<ConnectionState>
   discoverNativeDevices: () => Promise<DiscoveredNativeDevice[]>
+  discoverAdbEndpoints: (host?: string) => Promise<ResolvedAdbEndpoints[]>
   connectDevice: (input: ConnectDeviceInput) => Promise<ConnectionState>
   disconnectDevice: () => Promise<ConnectionState>
   sendRemoteCommand: (command: RemoteCommand) => Promise<ActionFeedback>
@@ -49,6 +51,7 @@ export const IPC_CHANNELS = {
   devicesBeginNativePairing: 'devices.beginNativePairing',
   devicesCompleteNativePairing: 'devices.completeNativePairing',
   devicesDiscoverNative: 'devices.discoverNative',
+  devicesDiscoverAdb: 'devices.discoverAdb',
   devicesConnect: 'devices.connect',
   devicesDisconnect: 'devices.disconnect',
   remoteSendKey: 'remote.sendKey',

@@ -23,6 +23,7 @@ const IPC_CHANNELS = {
   devicesBeginNativePairing: "devices.beginNativePairing",
   devicesCompleteNativePairing: "devices.completeNativePairing",
   devicesDiscoverNative: "devices.discoverNative",
+  devicesDiscoverAdb: "devices.discoverAdb",
   devicesConnect: "devices.connect",
   devicesDisconnect: "devices.disconnect",
   remoteSendKey: "remote.sendKey",
@@ -62,6 +63,10 @@ function registerIpc(options) {
     (_event, input) => deviceManager2.completeNativePairing(input.code)
   );
   ipcMain.handle(IPC_CHANNELS.devicesDiscoverNative, () => deviceManager2.discoverNativeDevices());
+  ipcMain.handle(IPC_CHANNELS.devicesDiscoverAdb, async (_event, host) => {
+    const adbInfo = await adbLocator.locate();
+    return adbInfo.available ? deviceManager2.discoverAdbEndpoints(host) : [];
+  });
   ipcMain.handle(IPC_CHANNELS.devicesConnect, (_event, input) => deviceManager2.connectDevice(input));
   ipcMain.handle(IPC_CHANNELS.devicesDisconnect, () => deviceManager2.disconnectActiveDevice());
   ipcMain.handle(IPC_CHANNELS.remoteSendKey, (_event, command) => remoteController.sendCommand(command));
@@ -191,6 +196,22 @@ function parseAdbDevices(output) {
   return output.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.toLowerCase().startsWith("list of devices attached")).map((line) => {
     const [serial, state] = line.split(/\s+/);
     return serial && state ? { serial, state } : null;
+  }).filter((item) => item !== null);
+}
+function parseAdbMdnsServices(output) {
+  return output.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.toLowerCase().startsWith("list of discovered mdns services")).map((line) => {
+    const match = line.match(/^(.+?)\s+(_adb(?:-tls-(?:pairing|connect))?\._tcp)\s+(\d+\.\d+\.\d+\.\d+):(\d+)$/);
+    if (!match) {
+      return null;
+    }
+    const [, name, rawType, host, portText] = match;
+    const serviceType = rawType === "_adb-tls-pairing._tcp" ? "pairing" : rawType === "_adb-tls-connect._tcp" ? "connect" : "legacy";
+    return {
+      name: name.trim(),
+      host,
+      port: Number(portText),
+      serviceType
+    };
   }).filter((item) => item !== null);
 }
 function humanizePackage(packageName) {
@@ -349,6 +370,20 @@ ${stderr}`.toLowerCase();
     if (!joined.includes("connected to") && !joined.includes("already connected")) {
       throw new Error((stdout || stderr || "Unable to connect to device.").trim());
     }
+  }
+  async killServer() {
+    await this.runRaw(["kill-server"], { timeoutMs: 5e3 });
+  }
+  async startServer() {
+    await this.runRaw(["start-server"], { timeoutMs: 8e3 });
+  }
+  async restartServer() {
+    await this.killServer();
+    await this.startServer();
+  }
+  async listMdnsServices() {
+    const { stdout } = await this.runRaw(["mdns", "services"], { timeoutMs: 8e3 });
+    return parseAdbMdnsServices(stdout);
   }
   async disconnect(serial) {
     const args = ["disconnect"];
@@ -664,6 +699,10 @@ class ElectronDeviceStore {
   }
 }
 const RECENT_APPS_LIMIT = 8;
+function normalizeHostKey(host) {
+  const normalized = host?.trim().toLowerCase();
+  return normalized ? normalized : null;
+}
 function hasNativeProfile(device) {
   return Boolean(device.nativeRemote);
 }
@@ -707,6 +746,35 @@ function createBackendHealthSnapshot(overrides) {
     ...overrides
   };
 }
+function shouldSuggestAdbPairing(device, message) {
+  if (!message) {
+    return false;
+  }
+  const normalized = message.toLowerCase();
+  const isReachabilityError = normalized.includes("no route to host") || normalized.includes("network is unreachable") || normalized.includes("connection refused") || normalized.includes("failed to connect");
+  return isReachabilityError && (device.mode === "pair" || device.connectPort === 5555);
+}
+function formatAdbConnectError(device, error) {
+  const message = error instanceof Error ? error.message.trim() : "ADB connection failed.";
+  if (shouldSuggestAdbPairing(device, message)) {
+    if (device.mode === "pair") {
+      return `${message} The TV is not reachable on saved ADB connect port ${device.connectPort}. Open Wireless Debugging on the TV, confirm the current connect port, then pair and connect again.`;
+    }
+    if (device.connectPort === 5555) {
+      return `${message} Port 5555 is usually not the Wireless Debugging port on Android TV. Switch to "Pair then connect" and use the current connect port shown on the TV instead of 5555.`;
+    }
+  }
+  const normalized = message.toLowerCase();
+  const isReachabilityError = normalized.includes("no route to host") || normalized.includes("network is unreachable") || normalized.includes("connection refused");
+  if (isReachabilityError) {
+    return `${message} ${device.host}:${device.connectPort} is not reachable right now. If this TV uses Wireless Debugging, reopen that screen and verify the current connect port on the TV.`;
+  }
+  return message;
+}
+function shouldRetryAdbAfterServerRestart(error) {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return message.includes("no route to host") || message.includes("cannot assign requested address") || message.includes("network is unreachable");
+}
 class DeviceManager extends EventEmitter {
   constructor(store, adbClient, nativeRemoteService) {
     super();
@@ -722,12 +790,14 @@ class DeviceManager extends EventEmitter {
   healthCheckTimer = null;
   async init() {
     const snapshot = this.store.load();
-    this.savedDevices = snapshot.savedDevices.map(
+    const normalizedDevices = snapshot.savedDevices.map(
       (device) => this.normalizeDevice({
         ...device
       })
     );
-    this.activeDeviceId = snapshot.activeDeviceId;
+    const deduped = this.dedupeSavedDevices(normalizedDevices, snapshot.activeDeviceId);
+    this.savedDevices = deduped.devices;
+    this.activeDeviceId = deduped.activeDeviceId;
     this.nativeRemoteService.on("unpaired", (message) => {
       const activeDevice = this.getActiveDevice();
       if (activeDevice) {
@@ -746,6 +816,7 @@ class DeviceManager extends EventEmitter {
       });
     });
     this.emitDevicesChanged();
+    this.persist();
     this.healthCheckTimer = setInterval(() => {
       void this.performHealthCheck();
     }, 7e3);
@@ -909,8 +980,14 @@ class DeviceManager extends EventEmitter {
       return this.getHealth(adbAvailable);
     }
     try {
+      const discovered = await this.getResolvedAdbEndpoint(activeDevice.host);
+      const resolvedDevice = discovered ? this.normalizeDevice({
+        ...activeDevice,
+        connectPort: discovered.connectPort ?? activeDevice.connectPort,
+        pairPort: discovered.pairPort ?? activeDevice.pairPort
+      }) : activeDevice;
       const devices = await this.adbClient.listDevices();
-      const liveState = deriveConnectionState(devices, buildSerial(activeDevice), activeDevice.id);
+      const liveState = deriveConnectionState(devices, buildSerial(resolvedDevice), activeDevice.id);
       if (liveState.status === "connected") {
         this.updateBackendHealth(activeDevice.id, "adb", {
           available: true,
@@ -930,17 +1007,17 @@ class DeviceManager extends EventEmitter {
         });
         return this.getHealth(adbAvailable);
       }
-      if (activeDevice.mode === "pair" && activeDevice.pairPort) {
+      if (resolvedDevice.mode === "pair" && resolvedDevice.pairPort) {
         this.updateBackendHealth(activeDevice.id, "adb", {
           available: true,
           ready: false,
           lastState: "pairing",
-          lastError: `Pair ADB with ${activeDevice.host}:${activeDevice.pairPort} before reconnecting.`
+          lastError: `Pair ADB with ${resolvedDevice.host}:${resolvedDevice.pairPort} before reconnecting.`
         });
         return this.getHealth(adbAvailable);
       }
-      await this.adbClient.connect(activeDevice.host, activeDevice.connectPort);
-      const nextState = await this.adbClient.getConnectionState(activeDevice);
+      await this.connectAdbWithRecovery(resolvedDevice);
+      const nextState = await this.adbClient.getConnectionState(resolvedDevice);
       if (nextState.status === "connected") {
         this.updateBackendHealth(activeDevice.id, "adb", {
           available: true,
@@ -970,14 +1047,59 @@ class DeviceManager extends EventEmitter {
   async discoverNativeDevices() {
     return this.nativeRemoteService.discoverDevices();
   }
+  async discoverAdbEndpoints(host) {
+    const client = this.adbClient;
+    let services = [];
+    if (typeof client.listMdnsServices === "function") {
+      try {
+        services = await client.listMdnsServices();
+      } catch {
+        services = [];
+      }
+    }
+    if (services.length === 0) {
+      services = await this.discoverAdbBonjourServices();
+    }
+    const grouped = /* @__PURE__ */ new Map();
+    for (const service of services) {
+      const key = normalizeHostKey(service.host);
+      if (!key) {
+        continue;
+      }
+      const current = grouped.get(key) ?? {
+        host: service.host,
+        services: []
+      };
+      current.services.push(service);
+      if (service.serviceType === "pairing") {
+        current.pairPort = service.port;
+      }
+      if (service.serviceType === "connect" || !current.connectPort && service.serviceType === "legacy") {
+        current.connectPort = service.port;
+      }
+      grouped.set(key, current);
+    }
+    const targetHostKey = normalizeHostKey(host);
+    const endpoints = [...grouped.values()].sort((left, right) => left.host.localeCompare(right.host));
+    return targetHostKey ? endpoints.filter((item) => normalizeHostKey(item.host) === targetHostKey) : endpoints;
+  }
   async saveDevice(input) {
-    const existing = input.id ? this.savedDevices.find((item) => item.id === input.id) ?? null : null;
+    const { device: existing } = this.findSavedDevice(input);
     const device = this.normalizeDevice({
       ...existing,
       ...input,
-      id: input.id ?? existing?.id ?? randomUUID()
+      id: existing?.id ?? input.id ?? randomUUID()
     });
-    this.savedDevices = this.savedDevices.filter((item) => item.id !== device.id);
+    const deviceHostKey = normalizeHostKey(device.host);
+    this.savedDevices = this.savedDevices.filter((item) => {
+      if (item.id === device.id) {
+        return false;
+      }
+      if (deviceHostKey && normalizeHostKey(item.host) === deviceHostKey) {
+        return false;
+      }
+      return true;
+    });
     this.savedDevices.push(device);
     this.persist();
     this.emitDevicesChanged();
@@ -1135,17 +1257,20 @@ class DeviceManager extends EventEmitter {
     }
   }
   async pairAndConnect(input) {
+    const discovered = await this.getResolvedAdbEndpoint(input.host);
+    const connectPort = discovered?.connectPort ?? input.connectPort;
+    const pairPort = discovered?.pairPort ?? input.pairPort;
     this.updateConnectionState({
       status: "pairing",
       backend: "adb",
-      message: `Pairing ADB with ${input.host}:${input.pairPort}...`
+      message: `Pairing ADB with ${input.host}:${pairPort}...`
     });
-    await this.adbClient.pair(input.host, input.pairPort, input.code);
+    await this.adbClient.pair(input.host, pairPort, input.code);
     const saved = await this.saveDevice({
       name: input.name,
       host: input.host,
-      connectPort: input.connectPort,
-      pairPort: input.pairPort,
+      connectPort,
+      pairPort,
       mode: input.mode ?? "pair",
       preferredBackend: input.preferredBackend,
       nativeRemote: input.nativeRemote,
@@ -1160,13 +1285,13 @@ class DeviceManager extends EventEmitter {
     return this.connectViaAdb(saved);
   }
   async connectDevice(input) {
-    const existing = input.id ? this.savedDevices.find((device) => device.id === input.id) ?? null : null;
+    const { device: existing } = this.findSavedDevice(input);
     const baseDeviceDraft = existing ? this.normalizeDevice({
       ...existing,
       ...input,
       id: existing.id
     }) : this.normalizeDevice({
-      id: input.id ?? randomUUID(),
+      id: randomUUID(),
       name: input.name?.trim() || input.host || "Android TV",
       host: input.host,
       connectPort: input.connectPort,
@@ -1176,49 +1301,61 @@ class DeviceManager extends EventEmitter {
       nativeRemote: input.nativeRemote,
       adbEnabled: input.adbEnabled
     });
-    const baseDevice = await this.saveDevice({
-      id: baseDeviceDraft.id,
-      name: baseDeviceDraft.name,
-      host: baseDeviceDraft.host,
-      connectPort: baseDeviceDraft.connectPort,
-      pairPort: baseDeviceDraft.pairPort,
-      mode: baseDeviceDraft.mode,
-      preferredBackend: baseDeviceDraft.preferredBackend,
-      nativeRemote: baseDeviceDraft.nativeRemote,
-      adbEnabled: baseDeviceDraft.adbEnabled
-    });
-    this.activeDeviceId = baseDevice.id;
-    this.persist();
+    if (existing) {
+      this.activeDeviceId = existing.id;
+      this.persist();
+    }
+    const discovered = await this.getResolvedAdbEndpoint(baseDeviceDraft.host);
+    if (discovered?.connectPort) {
+      baseDeviceDraft.connectPort = discovered.connectPort;
+    }
+    if (discovered?.pairPort) {
+      baseDeviceDraft.pairPort = discovered.pairPort;
+    }
     let nativeError = null;
-    for (const backend of getBackendOrder(baseDevice)) {
-      if (backend === "native" && canConnectViaNative(baseDevice)) {
+    for (const backend of getBackendOrder(baseDeviceDraft)) {
+      if (backend === "native" && canConnectViaNative(baseDeviceDraft)) {
         try {
-          const result = await this.connectViaNative(baseDevice);
+          const result = await this.connectViaNative(baseDeviceDraft);
           if (result.status === "pairing") {
             return this.connectionState;
           }
           return result;
         } catch (error) {
           nativeError = error instanceof Error ? error : new Error("Native remote connection failed.");
-          this.updateBackendHealth(baseDevice.id, "native", {
-            available: true,
-            ready: false,
-            lastState: "error",
-            lastError: nativeError.message
-          });
+          baseDeviceDraft.backendHealth = {
+            adb: createBackendHealthSnapshot(baseDeviceDraft.backendHealth?.adb),
+            native: createBackendHealthSnapshot({
+              ...baseDeviceDraft.backendHealth?.native,
+              available: true,
+              ready: false,
+              lastState: "error",
+              lastError: nativeError.message
+            })
+          };
+          if (existing) {
+            this.updateBackendHealth(existing.id, "native", {
+              available: true,
+              ready: false,
+              lastState: "error",
+              lastError: nativeError.message
+            });
+          }
         }
       }
-      if (backend === "adb" && canUseAdb(baseDevice)) {
+      if (backend === "adb" && canUseAdb(baseDeviceDraft)) {
         try {
-          return await this.connectViaAdb(baseDevice, nativeError);
+          return await this.connectViaAdb(baseDeviceDraft, nativeError);
         } catch (error) {
           const adbError = error instanceof Error ? error : new Error("ADB connection failed.");
-          this.updateBackendHealth(baseDevice.id, "adb", {
-            available: true,
-            ready: false,
-            lastState: "error",
-            lastError: adbError.message
-          });
+          if (existing) {
+            this.updateBackendHealth(existing.id, "adb", {
+              available: true,
+              ready: false,
+              lastState: "error",
+              lastError: adbError.message
+            });
+          }
           if (nativeError) {
             throw new Error(`${nativeError.message} ADB fallback also failed: ${adbError.message}`);
           }
@@ -1364,7 +1501,13 @@ class DeviceManager extends EventEmitter {
     if (!canUseAdb(activeDevice)) {
       throw new Error("This TV is using native remote only. Enable ADB fallback in Setup to unlock typing and installed-app launching.");
     }
-    const initialState = await this.adbClient.getConnectionState(activeDevice);
+    const discovered = await this.getResolvedAdbEndpoint(activeDevice.host);
+    const resolvedDevice = discovered ? this.normalizeDevice({
+      ...activeDevice,
+      connectPort: discovered.connectPort ?? activeDevice.connectPort,
+      pairPort: discovered.pairPort ?? activeDevice.pairPort
+    }) : activeDevice;
+    const initialState = await this.adbClient.getConnectionState(resolvedDevice);
     if (initialState.status === "unauthorized") {
       this.updateBackendHealth(activeDevice.id, "adb", {
         available: true,
@@ -1375,9 +1518,9 @@ class DeviceManager extends EventEmitter {
       throw new Error(initialState.message ?? "Authorize this computer in the TV wireless debugging prompt first.");
     }
     if (initialState.status !== "connected") {
-      await this.adbClient.connect(activeDevice.host, activeDevice.connectPort);
+      await this.connectAdbWithRecovery(resolvedDevice);
     }
-    const state = initialState.status === "connected" ? initialState : await this.adbClient.getConnectionState(activeDevice);
+    const state = initialState.status === "connected" ? initialState : await this.adbClient.getConnectionState(resolvedDevice);
     if (state.status !== "connected") {
       this.updateBackendHealth(activeDevice.id, "adb", {
         available: true,
@@ -1393,7 +1536,23 @@ class DeviceManager extends EventEmitter {
       lastState: "ready",
       lastError: void 0
     });
-    return callback(buildSerial(activeDevice));
+    return callback(buildSerial(resolvedDevice));
+  }
+  async connectAdbWithRecovery(device) {
+    try {
+      await this.adbClient.connect(device.host, device.connectPort);
+      return;
+    } catch (error) {
+      if (shouldRetryAdbAfterServerRestart(error)) {
+        const client = this.adbClient;
+        if (typeof client.restartServer === "function") {
+          await client.restartServer();
+          await this.adbClient.connect(device.host, device.connectPort);
+          return;
+        }
+      }
+      throw new Error(formatAdbConnectError(device, error));
+    }
   }
   async connectViaNative(device) {
     this.updateConnectionState({
@@ -1441,7 +1600,7 @@ class DeviceManager extends EventEmitter {
       lastState: "connecting",
       lastError: void 0
     });
-    await this.adbClient.connect(device.host, device.connectPort);
+    await this.connectAdbWithRecovery(device);
     const nextState = await this.adbClient.getConnectionState(device);
     if (nextState.status !== "connected") {
       this.updateBackendHealth(device.id, "adb", {
@@ -1457,6 +1616,8 @@ class DeviceManager extends EventEmitter {
       return this.connectionState;
     }
     const now = (/* @__PURE__ */ new Date()).toISOString();
+    const adbHealthBase = createBackendHealthSnapshot(device.backendHealth?.adb);
+    const nativeHealthBase = createBackendHealthSnapshot(device.backendHealth?.native);
     const saved = await this.saveDevice({
       id: device.id,
       name: device.name,
@@ -1473,7 +1634,7 @@ class DeviceManager extends EventEmitter {
     saved.backendHealth = {
       ...saved.backendHealth,
       adb: createBackendHealthSnapshot({
-        ...saved.backendHealth?.adb,
+        ...adbHealthBase,
         available: true,
         ready: true,
         lastCheckedAt: now,
@@ -1482,13 +1643,13 @@ class DeviceManager extends EventEmitter {
         lastState: "ready"
       }),
       native: createBackendHealthSnapshot({
-        ...saved.backendHealth?.native,
+        ...nativeHealthBase,
         available: hasNativeProfile(saved),
         ready: false,
         lastCheckedAt: now,
-        lastState: saved.backendHealth?.native.lastState ?? "disconnected",
-        lastConnectedAt: saved.backendHealth?.native.lastConnectedAt,
-        lastError: saved.backendHealth?.native.lastError
+        lastState: nativeHealthBase.lastState ?? "disconnected",
+        lastConnectedAt: nativeHealthBase.lastConnectedAt,
+        lastError: nativeHealthBase.lastError
       })
     };
     this.savedDevices = this.savedDevices.map((item) => item.id === saved.id ? saved : item);
@@ -1506,6 +1667,8 @@ class DeviceManager extends EventEmitter {
   }
   async finalizeNativeConnection(device, certificate) {
     const now = (/* @__PURE__ */ new Date()).toISOString();
+    const adbHealthBase = createBackendHealthSnapshot(device.backendHealth?.adb);
+    const nativeHealthBase = createBackendHealthSnapshot(device.backendHealth?.native);
     const saved = await this.saveDevice({
       id: device.id,
       name: device.name,
@@ -1522,16 +1685,16 @@ class DeviceManager extends EventEmitter {
     saved.backendHealth = {
       ...saved.backendHealth,
       adb: createBackendHealthSnapshot({
-        ...saved.backendHealth?.adb,
+        ...adbHealthBase,
         available: canUseAdb(saved),
-        ready: saved.backendHealth?.adb.ready ?? false,
+        ready: adbHealthBase.ready,
         lastCheckedAt: now,
-        lastConnectedAt: saved.backendHealth?.adb.lastConnectedAt,
-        lastState: saved.backendHealth?.adb.lastState,
-        lastError: saved.backendHealth?.adb.lastError
+        lastConnectedAt: adbHealthBase.lastConnectedAt,
+        lastState: adbHealthBase.lastState,
+        lastError: adbHealthBase.lastError
       }),
       native: createBackendHealthSnapshot({
-        ...saved.backendHealth?.native,
+        ...nativeHealthBase,
         available: true,
         ready: true,
         lastCheckedAt: now,
@@ -1561,8 +1724,10 @@ class DeviceManager extends EventEmitter {
         actions.push("pair_adb");
         break;
       case "adb_unauthorized":
-      case "adb_connect_failed":
         actions.push("connect_adb");
+        break;
+      case "adb_connect_failed":
+        actions.push(shouldSuggestAdbPairing(device, primaryIssue.detail) ? "pair_adb" : "connect_adb");
         break;
       case "native_pairing_stalled":
         actions.push(canUseAdb(device) ? "switch_to_adb" : "retry_native");
@@ -1664,6 +1829,110 @@ class DeviceManager extends EventEmitter {
         })
       }
     };
+  }
+  async getResolvedAdbEndpoint(host) {
+    if (!host) {
+      return null;
+    }
+    try {
+      const [match] = await this.discoverAdbEndpoints(host);
+      return match ?? null;
+    } catch {
+      return null;
+    }
+  }
+  async discoverAdbBonjourServices(timeoutMs = 4e3) {
+    const bonjour = new Bonjour();
+    const found = /* @__PURE__ */ new Map();
+    const services = [
+      { type: "pairing", bonjourType: "adb-tls-pairing" },
+      { type: "connect", bonjourType: "adb-tls-connect" },
+      { type: "legacy", bonjourType: "adb" }
+    ];
+    const browsers = services.map((service) => bonjour.find({ type: service.bonjourType, protocol: "tcp" }));
+    services.forEach((service, index) => {
+      browsers[index].on("up", (entry) => {
+        const host = entry.addresses.find((address) => /^\d+\.\d+\.\d+\.\d+$/.test(address));
+        if (!host) {
+          return;
+        }
+        found.set(`${service.type}:${entry.name}:${host}:${entry.port}`, {
+          name: entry.name,
+          host,
+          port: entry.port,
+          serviceType: service.type
+        });
+      });
+    });
+    await new Promise((resolve) => setTimeout(resolve, timeoutMs));
+    for (const browser of browsers) {
+      browser.stop();
+    }
+    bonjour.destroy();
+    return [...found.values()];
+  }
+  findSavedDevice(input) {
+    if (input.id) {
+      const byId = this.savedDevices.find((item) => item.id === input.id) ?? null;
+      if (byId) {
+        return {
+          device: byId,
+          matchedBy: "id"
+        };
+      }
+    }
+    const hostKey = normalizeHostKey(input.host);
+    if (!hostKey) {
+      return {
+        device: null,
+        matchedBy: null
+      };
+    }
+    const byHost = this.savedDevices.find((item) => normalizeHostKey(item.host) === hostKey) ?? null;
+    return {
+      device: byHost,
+      matchedBy: byHost ? "host" : null
+    };
+  }
+  dedupeSavedDevices(devices, activeDeviceId) {
+    const deduped = /* @__PURE__ */ new Map();
+    const idRemap = /* @__PURE__ */ new Map();
+    for (const device of devices) {
+      const hostKey = normalizeHostKey(device.host);
+      if (!hostKey) {
+        deduped.set(device.id, device);
+        continue;
+      }
+      const existing = deduped.get(hostKey);
+      if (!existing) {
+        deduped.set(hostKey, device);
+        continue;
+      }
+      const preferred = this.choosePreferredDuplicate(existing, device, activeDeviceId);
+      const discarded = preferred.id === existing.id ? device : existing;
+      deduped.set(hostKey, preferred);
+      idRemap.set(discarded.id, preferred.id);
+    }
+    return {
+      devices: [...deduped.values()],
+      activeDeviceId: activeDeviceId ? idRemap.get(activeDeviceId) ?? activeDeviceId : null
+    };
+  }
+  choosePreferredDuplicate(left, right, activeDeviceId) {
+    if (left.id === activeDeviceId) {
+      return left;
+    }
+    if (right.id === activeDeviceId) {
+      return right;
+    }
+    const leftTime = left.lastConnectedAt ? new Date(left.lastConnectedAt).getTime() : 0;
+    const rightTime = right.lastConnectedAt ? new Date(right.lastConnectedAt).getTime() : 0;
+    if (leftTime !== rightTime) {
+      return rightTime > leftTime ? right : left;
+    }
+    const leftScore = Number(Boolean(left.cachedApps)) + Number((left.favorites?.length ?? 0) > 0);
+    const rightScore = Number(Boolean(right.cachedApps)) + Number((right.favorites?.length ?? 0) > 0);
+    return rightScore > leftScore ? right : left;
   }
   replaceDevice(deviceId, patch, options) {
     const existing = this.savedDevices.find((item) => item.id === deviceId);
