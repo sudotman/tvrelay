@@ -12529,6 +12529,29 @@ const shortcutLegend = [
   { keys: "M", action: "Mute" },
   { keys: "+ / -", action: "Volume" }
 ];
+const remoteCommandLabels = {
+  up: "Up",
+  down: "Down",
+  left: "Left",
+  right: "Right",
+  select: "OK",
+  home: "Home",
+  back: "Back",
+  menu: "Menu",
+  appSwitch: "Recent Apps",
+  playPause: "Play/Pause",
+  rewind: "Rewind",
+  fastForward: "Fast Forward",
+  next: "Next",
+  previous: "Previous",
+  power: "Power",
+  sleep: "Sleep",
+  volumeUp: "Volume Up",
+  volumeDown: "Volume Down",
+  mute: "Mute",
+  enter: "Enter",
+  delete: "Delete"
+};
 function shouldHandleRemoteKey(target) {
   if (typeof HTMLElement === "undefined") {
     return true;
@@ -12538,6 +12561,22 @@ function shouldHandleRemoteKey(target) {
   }
   const tagName = target.tagName.toLowerCase();
   return tagName !== "input" && tagName !== "textarea" && !target.isContentEditable;
+}
+function getRecommendedActionMeta(action) {
+  switch (action) {
+    case "pair_adb":
+      return { label: "Pair ADB", detail: "Finish wireless debugging pairing for this TV." };
+    case "connect_adb":
+      return { label: "Reconnect ADB", detail: "Try the ADB path again." };
+    case "switch_to_adb":
+      return { label: "Use ADB Instead", detail: "Leave native pairing and switch back to ADB." };
+    case "retry_native":
+      return { label: "Retry Native", detail: "Try native remote pairing again." };
+    case "open_remote":
+      return { label: "Open Remote", detail: "Jump into the control view." };
+    case "open_apps":
+      return { label: "Open Apps", detail: "Browse installed apps for this TV." };
+  }
 }
 function groupApps(apps, activeDevice, query) {
   const normalizedQuery = query.trim().toLowerCase();
@@ -12558,6 +12597,105 @@ function groupApps(apps, activeDevice, query) {
     recents: recentApps,
     others
   };
+}
+function getVisibleRemoteButtons(buttons, preferences) {
+  const hidden = new Set(preferences?.remoteLayout.hiddenCommands ?? []);
+  return buttons.filter((button) => !hidden.has(button.command));
+}
+function getPinnedRemoteCommands(preferences) {
+  return preferences?.remoteLayout.pinnedCommands ?? [];
+}
+function canAssignFavoriteHotkey(device, packageName) {
+  return Boolean(device?.favorites?.includes(packageName));
+}
+function buildCommandPaletteItems(input) {
+  const needsConnection = input.isConnected ? void 0 : "Connect a TV first.";
+  const needsApps = input.appsReady ? void 0 : "ADB app access is required.";
+  const items = [
+    { id: "view:setup", label: "Open Setup", detail: "TVs, pairing, and connection.", section: "Navigation" },
+    { id: "view:remote", label: "Open Remote", detail: "Playback, typing, and transport.", section: "Navigation" },
+    { id: "view:apps", label: "Open Apps", detail: "Launch what is installed.", section: "Navigation" },
+    {
+      id: "system:wake",
+      label: "Wake and Reconnect",
+      detail: "Send ADB wake, then reconnect the selected TV.",
+      section: "Power Tools",
+      disabled: Boolean(needsConnection || !input.typingReady),
+      disabledReason: needsConnection ?? "ADB fallback is required."
+    },
+    {
+      id: "system:scrcpy",
+      label: "Open Screen Mirror",
+      detail: "Launch external scrcpy for this TV.",
+      section: "Power Tools",
+      disabled: Boolean(needsConnection || !input.typingReady || !input.scrcpyAvailable),
+      disabledReason: needsConnection ?? (!input.typingReady ? "ADB fallback is required." : "Install scrcpy first.")
+    },
+    {
+      id: "system:sideload",
+      label: "Install APK",
+      detail: "Choose and install an APK through ADB.",
+      section: "Power Tools",
+      disabled: Boolean(needsConnection || !input.typingReady),
+      disabledReason: needsConnection ?? "ADB fallback is required."
+    },
+    {
+      id: "apps:fetch",
+      label: input.hasAppCache ? "Refresh Apps" : "Fetch Apps",
+      detail: "Build the launchable app list for this TV.",
+      section: "Apps",
+      disabled: Boolean(needsConnection || needsApps),
+      disabledReason: needsConnection ?? needsApps
+    }
+  ];
+  for (const command of ["home", "back", "mute", "playPause", "volumeUp", "volumeDown"]) {
+    items.push({
+      id: `remote:${command}`,
+      label: remoteCommandLabels[command],
+      detail: "Send this remote command to the active TV.",
+      section: "Remote",
+      disabled: Boolean(needsConnection),
+      disabledReason: needsConnection
+    });
+  }
+  for (const action of input.quickActions) {
+    items.push({
+      id: `quick:${action.id}`,
+      label: action.label,
+      detail: action.detail,
+      section: action.kind === "app" ? "Apps" : "Remote",
+      disabled: action.disabled,
+      disabledReason: action.disabled ? action.detail : void 0
+    });
+  }
+  for (const action of input.recommendedActions) {
+    const meta = getRecommendedActionMeta(action);
+    items.push({
+      id: `recommended:${action}`,
+      label: meta.label,
+      detail: meta.detail,
+      section: "Recommended"
+    });
+  }
+  for (const app of input.apps.slice(0, 30)) {
+    items.push({
+      id: `app:${app.packageName}`,
+      label: app.displayName,
+      detail: `Launch ${app.packageName}`,
+      section: "Apps",
+      disabled: Boolean(needsConnection || needsApps),
+      disabledReason: needsConnection ?? needsApps
+    });
+  }
+  for (const device of input.devices) {
+    items.push({
+      id: `device:${device.id}`,
+      label: `Connect ${device.name}`,
+      detail: `${device.host} over ${device.preferredBackend === "native" ? "Native Remote" : "ADB"}`,
+      section: "TVs"
+    });
+  }
+  return items;
 }
 const viewTabs = [
   { id: "setup", label: "Setup", detail: "TVs, pairing, and connection." },
@@ -12584,6 +12722,13 @@ const soundRemoteButtons = [
   { label: "Vol +", command: "volumeUp" },
   { label: "Vol -", command: "volumeDown" }
 ];
+const favoriteHotkeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+const scrcpyPresetLabels = {
+  fast: "Fast",
+  high_quality: "High Quality",
+  no_audio: "No Audio",
+  record: "Record"
+};
 const initialForm = {
   name: "",
   host: "",
@@ -12729,6 +12874,15 @@ function getNativeSetupState(input) {
     tone: "neutral"
   };
 }
+function filterPaletteItems(items, query) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) {
+    return items.slice(0, 18);
+  }
+  return items.filter(
+    (item) => [item.label, item.detail, item.section].join(" ").toLowerCase().includes(normalized)
+  ).slice(0, 24);
+}
 function EmptyWorkspace(props) {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "empty-workspace", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: props.eyebrow }),
@@ -12759,21 +12913,41 @@ function App() {
   const [pendingAppPackage, setPendingAppPackage] = reactExports.useState(null);
   const [cooldownTick, setCooldownTick] = reactExports.useState(Date.now());
   const [foregroundAppState, setForegroundAppState] = reactExports.useState(diagnostics?.foregroundApp ?? null);
+  const [paletteOpen, setPaletteOpen] = reactExports.useState(false);
+  const [paletteQuery, setPaletteQuery] = reactExports.useState("");
+  const [selectedApk, setSelectedApk] = reactExports.useState(null);
   const deferredAppsQuery = reactExports.useDeferredValue(appsQuery);
+  const deferredPaletteQuery = reactExports.useDeferredValue(paletteQuery);
   const diagnosticsRequestRef = reactExports.useRef(0);
   const diagnosticsInFlightRef = reactExports.useRef(null);
   const diagnosticsQueuedRef = reactExports.useRef(false);
   const foregroundRequestRef = reactExports.useRef(0);
-  const activeDevice = diagnostics?.activeDevice ?? null;
+  const fallbackActiveDevice = connectionState.deviceId ? devices.find((device) => device.id === connectionState.deviceId) ?? null : null;
+  const activeDevice = diagnostics?.activeDevice ?? fallbackActiveDevice;
   const activeAppsCache = activeDevice?.cachedApps ?? null;
-  const activeBackend = diagnostics?.activeBackend ?? null;
+  const activeBackend = diagnostics?.activeBackend ?? connectionState.backend ?? null;
+  const activePreferences = activeDevice?.preferences;
   const pendingNativePairing = diagnostics?.pendingNativePairing ?? null;
   const health = diagnostics?.health ?? null;
-  diagnostics?.recommendedActions ?? [];
+  const recommendedActions = diagnostics?.recommendedActions ?? [];
   const foregroundApp = foregroundAppState ?? diagnostics?.foregroundApp ?? null;
-  const capabilities = diagnostics?.capabilities ?? {
+  const scrcpyStatus = diagnostics?.scrcpy ?? {
+    available: false,
+    installHint: "Install scrcpy and make sure it is on PATH."
+  };
+  const rawCapabilities = diagnostics?.capabilities ?? {
+    nativeRemote: false,
+    adbFallback: false,
     typing: false,
     apps: false
+  };
+  const adbReadyFromConnectedSession = connectionState.status === "connected" && activeBackend === "adb";
+  const adbReadyFromHealth = Boolean(activeDevice?.backendHealth?.adb.ready);
+  const adbFallbackReady = rawCapabilities.adbFallback || adbReadyFromConnectedSession || adbReadyFromHealth;
+  const capabilities = {
+    nativeRemote: rawCapabilities.nativeRemote || Boolean(activeDevice?.nativeRemote?.certificate),
+    typing: rawCapabilities.typing || adbFallbackReady,
+    apps: rawCapabilities.apps || adbFallbackReady
   };
   const waitingForNativeCode = Boolean(
     pendingNativePairing || connectionState.status === "pairing" && connectionState.backend === "native"
@@ -12801,7 +12975,24 @@ function App() {
   const compactAdbLabel = form.adbMode === "pair" ? "Pair ADB" : "Connect ADB";
   const appsAreLoading = busy === "apps";
   const appSections = groupApps(apps, activeDevice, deferredAppsQuery);
+  const allRemoteButtons = [...coreRemoteButtons, ...mediaRemoteButtons, ...soundRemoteButtons];
+  const pinnedRemoteButtons = getPinnedRemoteCommands(activePreferences).map((command) => allRemoteButtons.find((button) => button.command === command)).filter((button) => Boolean(button));
+  const visibleCoreRemoteButtons = getVisibleRemoteButtons(coreRemoteButtons, activePreferences);
+  const visibleMediaRemoteButtons = getVisibleRemoteButtons(mediaRemoteButtons, activePreferences);
+  const visibleSoundRemoteButtons = getVisibleRemoteButtons(soundRemoteButtons, activePreferences);
   const visibleAppCount = appSections.favorites.length + appSections.recents.length + appSections.others.length;
+  const paletteItems = buildCommandPaletteItems({
+    isConnected,
+    appsReady: capabilities.apps,
+    typingReady: capabilities.typing,
+    scrcpyAvailable: scrcpyStatus.available,
+    hasAppCache: Boolean(activeAppsCache),
+    apps,
+    devices,
+    quickActions: diagnostics?.quickActions ?? [],
+    recommendedActions
+  });
+  const visiblePaletteItems = filterPaletteItems(paletteItems, deferredPaletteQuery);
   const latestAction = actionFeed[0] ?? null;
   viewTabs.find((item) => item.id === tab) ?? viewTabs[0];
   const viewStatus = (() => {
@@ -13003,6 +13194,31 @@ function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [connectionState.status, tab]);
+  reactExports.useEffect(() => {
+    const onKeyDown = (event) => {
+      const isPaletteShortcut = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k";
+      if (isPaletteShortcut) {
+        event.preventDefault();
+        setPaletteOpen(true);
+        setPaletteQuery("");
+        return;
+      }
+      if (paletteOpen || !shouldHandleRemoteKey(event.target) || connectionState.status !== "connected") {
+        return;
+      }
+      if (!favoriteHotkeys.includes(event.key)) {
+        return;
+      }
+      const packageName = activePreferences?.appHotkeys?.[event.key];
+      if (!packageName) {
+        return;
+      }
+      event.preventDefault();
+      void launchPackageShortcut(packageName);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activePreferences, connectionState.status, paletteOpen]);
   reactExports.useEffect(() => {
     const hasActiveCooldown = Object.values(commandCooldowns).some((value) => (value ?? 0) > Date.now());
     if (!hasActiveCooldown) {
@@ -13423,6 +13639,128 @@ function App() {
       setBusy(null);
     }
   }
+  async function updatePreferences(input) {
+    try {
+      await window.tvRemoteApi.updateDevicePreferences(input);
+      await refreshDiagnostics();
+    } catch (error) {
+      publishErrorFeedback("Could not update TV preferences.", error, "system");
+    }
+  }
+  async function assignFavoriteHotkey(packageName, hotkey) {
+    if (!hotkey) {
+      const currentHotkey = favoriteHotkeys.find((key) => activePreferences?.appHotkeys?.[key] === packageName);
+      if (currentHotkey) {
+        await updatePreferences({ appHotkeys: { [currentHotkey]: null } });
+      }
+      return;
+    }
+    await updatePreferences({ appHotkeys: { [hotkey]: packageName } });
+  }
+  async function launchPackageShortcut(packageName) {
+    setPendingAppPackage(packageName);
+    try {
+      const feedback = await window.tvRemoteApi.runQuickAction(`launch:${packageName}`);
+      publishFeedback({
+        ...feedback,
+        detail: activeBackend === "native" ? "Favorite hotkey launched this app through ADB fallback." : "Favorite hotkey launched this app through ADB."
+      });
+      await refreshDiagnostics();
+    } catch (error) {
+      publishErrorFeedback("Favorite hotkey failed.", error, "app", { appPackage: packageName });
+    } finally {
+      setPendingAppPackage((current) => current === packageName ? null : current);
+    }
+  }
+  async function togglePinnedCommand(command) {
+    const current = activePreferences?.remoteLayout.pinnedCommands ?? [];
+    const next = current.includes(command) ? current.filter((item) => item !== command) : [...current, command];
+    await updatePreferences({ remoteLayout: { pinnedCommands: next } });
+  }
+  async function toggleHiddenCommand(command) {
+    const current = activePreferences?.remoteLayout.hiddenCommands ?? [];
+    const next = current.includes(command) ? current.filter((item) => item !== command) : [...current, command];
+    await updatePreferences({ remoteLayout: { hiddenCommands: next } });
+  }
+  async function resetRemoteLayout() {
+    await updatePreferences({ remoteLayout: { pinnedCommands: [], hiddenCommands: [] } });
+  }
+  async function setScrcpyPreset(preset) {
+    await updatePreferences({ scrcpyPreset: preset });
+  }
+  async function wakeAndReconnect() {
+    setBusy("wake");
+    try {
+      const feedback = await window.tvRemoteApi.wakeAndReconnect();
+      publishFeedback({
+        ...feedback,
+        detail: activeBackend === "native" ? `${feedback.detail} Wake used ADB fallback because native remote is not reliable for recovery.` : feedback.detail
+      });
+      await refreshDiagnostics();
+    } catch (error) {
+      publishErrorFeedback("Wake and reconnect failed.", error, "system");
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function chooseApkFile() {
+    setBusy("choose-apk");
+    try {
+      const selection = await window.tvRemoteApi.chooseApkFile();
+      if (selection) {
+        setSelectedApk(selection);
+        setStatusMessage(`${selection.name} is ready to install through ADB.`);
+      }
+    } catch (error) {
+      publishErrorFeedback("Could not choose APK.", error, "sideload");
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function installSelectedApk() {
+    if (!selectedApk) {
+      return;
+    }
+    setBusy("install-apk");
+    try {
+      const feedback = await window.tvRemoteApi.installApk({ id: selectedApk.id });
+      publishFeedback({
+        ...feedback,
+        detail: activeBackend === "native" ? `${feedback.detail} Install used ADB fallback because native remote cannot sideload apps.` : feedback.detail
+      });
+      setSelectedApk(null);
+      await refreshDiagnostics();
+    } catch (error) {
+      publishErrorFeedback("APK install failed.", error, "sideload");
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function launchScrcpy() {
+    setBusy("scrcpy");
+    try {
+      const preset = activePreferences?.scrcpyPreset ?? "fast";
+      const feedback = await window.tvRemoteApi.launchScrcpy({ preset });
+      publishFeedback({
+        ...feedback,
+        detail: activeBackend === "native" && feedback.status !== "blocked" ? `${feedback.detail} scrcpy used ADB fallback because native remote cannot mirror the screen.` : feedback.detail
+      });
+      await refreshDiagnostics();
+    } catch (error) {
+      publishErrorFeedback("Could not launch scrcpy.", error, "scrcpy");
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function runQuickAction(id) {
+    try {
+      const feedback = await window.tvRemoteApi.runQuickAction(id);
+      publishFeedback(feedback);
+      await refreshDiagnostics();
+    } catch (error) {
+      publishErrorFeedback("Quick action failed.", error, "quick_action", { actionId: id });
+    }
+  }
   async function runAdbTroubleshooter() {
     setBusy("troubleshoot");
     try {
@@ -13433,6 +13771,90 @@ function App() {
       setStatusMessage(error instanceof Error ? error.message : "Troubleshooter failed.");
     } finally {
       setBusy(null);
+    }
+  }
+  async function runRecommendedAction(action) {
+    switch (action) {
+      case "pair_adb":
+        setTab("setup");
+        setForm((current) => ({ ...current, adbMode: "pair", preferredBackend: "adb" }));
+        setStatusMessage("Enter the TV pairing code in Setup, then pair ADB.");
+        break;
+      case "connect_adb":
+        setTab("setup");
+        await connectUsingSetup("adb");
+        break;
+      case "switch_to_adb":
+        setTab("setup");
+        await connectUsingSetup("adb");
+        break;
+      case "retry_native":
+        setTab("setup");
+        await beginNativePairing();
+        break;
+      case "open_remote":
+        setTab("remote");
+        break;
+      case "open_apps":
+        setTab("apps");
+        if (!activeAppsCache) {
+          await loadApps();
+        }
+        break;
+    }
+  }
+  async function runPaletteItem(item) {
+    if (item.disabled) {
+      setStatusMessage(item.disabledReason ?? item.detail);
+      return;
+    }
+    setPaletteOpen(false);
+    if (item.id.startsWith("view:")) {
+      setTab(item.id.slice("view:".length));
+      return;
+    }
+    if (item.id.startsWith("remote:")) {
+      await sendRemoteCommand(item.id.slice("remote:".length));
+      return;
+    }
+    if (item.id.startsWith("quick:")) {
+      await runQuickAction(item.id.slice("quick:".length));
+      return;
+    }
+    if (item.id.startsWith("recommended:")) {
+      await runRecommendedAction(item.id.slice("recommended:".length));
+      return;
+    }
+    if (item.id.startsWith("app:")) {
+      const packageName = item.id.slice("app:".length);
+      const app = apps.find((candidate) => candidate.packageName === packageName);
+      if (app) {
+        await launchApp(app);
+      }
+      return;
+    }
+    if (item.id.startsWith("device:")) {
+      const device = devices.find((candidate) => candidate.id === item.id.slice("device:".length));
+      if (device) {
+        await connectSavedDevice(device);
+      }
+      return;
+    }
+    if (item.id === "apps:fetch") {
+      setTab("apps");
+      await loadApps(true);
+      return;
+    }
+    if (item.id === "system:wake") {
+      await wakeAndReconnect();
+      return;
+    }
+    if (item.id === "system:scrcpy") {
+      await launchScrcpy();
+      return;
+    }
+    if (item.id === "system:sideload") {
+      await chooseApkFile();
     }
   }
   function getAppBadgeLabel(app) {
@@ -13526,6 +13948,58 @@ function App() {
       button.command
     );
   }
+  function renderCommandPalette() {
+    if (!paletteOpen) {
+      return null;
+    }
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "palette-backdrop", role: "presentation", onMouseDown: () => setPaletteOpen(false), children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "section",
+      {
+        className: "command-palette",
+        role: "dialog",
+        "aria-modal": "true",
+        "aria-label": "Command palette",
+        onMouseDown: (event) => event.stopPropagation(),
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "palette-top", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "Command palette" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost-button", type: "button", onClick: () => setPaletteOpen(false), children: "Close" })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              autoFocus: true,
+              value: paletteQuery,
+              onChange: (event) => setPaletteQuery(event.target.value),
+              onKeyDown: (event) => {
+                if (event.key === "Escape") {
+                  setPaletteOpen(false);
+                }
+              },
+              placeholder: "Search commands, apps, TVs, and power tools..."
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "palette-list", children: visiblePaletteItems.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "empty-inline", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "No commands match that search." }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Try “apps”, “wake”, “scrcpy”, or a saved TV name." })
+          ] }) : visiblePaletteItems.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              className: `palette-item ${item.disabled ? "disabled" : ""}`,
+              type: "button",
+              onClick: () => void runPaletteItem(item),
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: item.section }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: item.label }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: item.disabled ? item.disabledReason ?? item.detail : item.detail })
+              ]
+            },
+            item.id
+          )) })
+        ]
+      }
+    ) });
+  }
   function renderAppSection(title, sectionApps) {
     if (sectionApps.length === 0) {
       return null;
@@ -13541,6 +14015,7 @@ function App() {
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-list", children: sectionApps.map((app) => {
         const isFavorite = activeDevice?.favorites?.includes(app.packageName) ?? false;
         const isLaunching = pendingAppPackage === app.packageName;
+        const assignedHotkey = favoriteHotkeys.find((hotkey) => activePreferences?.appHotkeys?.[hotkey] === app.packageName) ?? "";
         return /* @__PURE__ */ jsxRuntimeExports.jsxs("article", { className: `app-row ${isLaunching ? "busy" : ""}`, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-row-main", children: [
             app.iconDataUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: "app-icon", src: app.iconDataUrl, alt: "", "aria-hidden": "true" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -13567,6 +14042,19 @@ function App() {
                 onClick: () => void toggleFavorite(app.packageName),
                 disabled: busy === `favorite-${app.packageName}`,
                 children: isFavorite ? "Pinned" : "Pin"
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "select",
+              {
+                value: assignedHotkey,
+                onChange: (event) => void assignFavoriteHotkey(app.packageName, event.target.value),
+                disabled: !canAssignFavoriteHotkey(activeDevice, app.packageName),
+                title: isFavorite ? "Assign number hotkey" : "Pin this app before assigning a hotkey",
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: "Hotkey" }),
+                  favoriteHotkeys.map((hotkey) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: hotkey, children: hotkey }, hotkey))
+                ]
               }
             ),
             /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -14007,6 +14495,10 @@ function App() {
           ] })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "remote-stage", children: [
+          pinnedRemoteButtons.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "my-controls", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "subsection-heading", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "My controls" }) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "command-grid compact-grid", children: pinnedRemoteButtons.map(renderRemoteActionButton) })
+          ] }) : null,
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "dpad-shell", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "dpad", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "dpad-btn up", onClick: () => void sendRemoteCommand("up"), children: "Up" }),
@@ -14028,20 +14520,117 @@ function App() {
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "command-groups", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "command-group", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "subsection-heading", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "Core" }) }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "command-grid", children: coreRemoteButtons.map(renderRemoteActionButton) })
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "command-grid", children: visibleCoreRemoteButtons.map(renderRemoteActionButton) })
             ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "command-group", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "subsection-heading", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "Playback" }) }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "command-grid compact-grid", children: mediaRemoteButtons.map(renderRemoteActionButton) })
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "command-grid compact-grid", children: visibleMediaRemoteButtons.map(renderRemoteActionButton) })
             ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "command-group", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "subsection-heading", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "Sound" }) }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "command-grid compact-grid", children: soundRemoteButtons.map(renderRemoteActionButton) })
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "command-grid compact-grid", children: visibleSoundRemoteButtons.map(renderRemoteActionButton) })
             ] })
           ] })
         ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet support-sheet", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "support-section", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "section-heading", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Power tools" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "ADB extensions" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted", children: activeBackend === "native" ? "These use ADB fallback even while native remote is active." : "These use the selected TV through ADB." })
+          ] }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "tool-grid", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "tool-card", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Screen mirror" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: scrcpyStatus.available ? scrcpyStatus.version ?? "scrcpy detected" : scrcpyStatus.installHint }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "select",
+                {
+                  value: activePreferences?.scrcpyPreset ?? "fast",
+                  onChange: (event) => void setScrcpyPreset(event.target.value),
+                  disabled: !capabilities.typing,
+                  children: Object.entries(scrcpyPresetLabels).map(([value, label]) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value, children: label }, value))
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  className: "primary-button",
+                  type: "button",
+                  onClick: () => void launchScrcpy(),
+                  disabled: busy === "scrcpy" || !capabilities.typing || !scrcpyStatus.available,
+                  children: "Open scrcpy"
+                }
+              )
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "tool-card", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "APK sideload" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: selectedApk ? `${selectedApk.name} selected` : capabilities.typing ? "Choose an APK, then install it over ADB." : "ADB fallback is required for APK install." }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "button-row compact-row", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: "ghost-button",
+                    type: "button",
+                    onClick: () => void chooseApkFile(),
+                    disabled: busy === "choose-apk" || !capabilities.typing,
+                    children: "Choose APK"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: "primary-button",
+                    type: "button",
+                    onClick: () => void installSelectedApk(),
+                    disabled: busy === "install-apk" || !selectedApk || !capabilities.typing,
+                    children: "Install"
+                  }
+                )
+              ] })
+            ] })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "studio-divider" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "support-section", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "section-heading", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Customize" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Remote layout" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted", children: "Pin daily controls or hide optional buttons. The D-pad always stays visible." })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost-button", type: "button", onClick: () => void resetRemoteLayout(), children: "Reset" })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "customize-list", children: allRemoteButtons.map((button) => {
+            const isPinned = activePreferences?.remoteLayout.pinnedCommands.includes(button.command) ?? false;
+            const isHidden = activePreferences?.remoteLayout.hiddenCommands.includes(button.command) ?? false;
+            return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "customize-row", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: button.label }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "row-actions", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: `ghost-button ${isPinned ? "is-selected" : ""}`,
+                    type: "button",
+                    onClick: () => void togglePinnedCommand(button.command),
+                    children: isPinned ? "Pinned" : "Pin"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: `ghost-button ${isHidden ? "is-selected" : ""}`,
+                    type: "button",
+                    onClick: () => void toggleHiddenCommand(button.command),
+                    children: isHidden ? "Hidden" : "Hide"
+                  }
+                )
+              ] })
+            ] }, button.command);
+          }) })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "studio-divider" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "support-section", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "section-heading", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Keyboard mode" }),
@@ -14163,6 +14752,7 @@ function App() {
       /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: toast.title }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: toast.detail })
     ] }, toast.id)) }),
+    renderCommandPalette(),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shell-layout", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: `side-rail rail-${connectionTone}`, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rail-brand", children: [
@@ -14193,28 +14783,43 @@ function App() {
           /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: selectedHostLabel }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: liveStatusTitle })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "rail-actions", children: isConnected ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            className: "ghost-button danger-button",
-            type: "button",
-            onClick: () => void disconnect(),
-            disabled: busy === "disconnect",
-            children: "Disconnect"
-          }
-        ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-          tab !== "setup" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "primary-button", type: "button", onClick: () => setTab("setup"), children: "Open setup" }) : null,
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "button",
-            {
-              className: "ghost-button",
-              type: "button",
-              onClick: () => void connectUsingSetup("adb"),
-              disabled: !hasSelectedTv || !form.adbEnabled || busy === "connect",
-              children: compactAdbLabel
-            }
-          )
-        ] }) })
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rail-actions", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "primary-button", type: "button", onClick: () => setPaletteOpen(true), children: "Command palette" }),
+          isConnected ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: "ghost-button",
+                type: "button",
+                onClick: () => void wakeAndReconnect(),
+                disabled: busy === "wake" || !capabilities.typing,
+                children: "Wake / reconnect"
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: "ghost-button danger-button",
+                type: "button",
+                onClick: () => void disconnect(),
+                disabled: busy === "disconnect",
+                children: "Disconnect"
+              }
+            )
+          ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+            tab !== "setup" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "primary-button", type: "button", onClick: () => setTab("setup"), children: "Open setup" }) : null,
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: "ghost-button",
+                type: "button",
+                onClick: () => void connectUsingSetup("adb"),
+                disabled: !hasSelectedTv || !form.adbEnabled || busy === "connect",
+                children: compactAdbLabel
+              }
+            )
+          ] })
+        ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "main-stage", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: `hero-ribbon ribbon-${connectionTone}`, children: [

@@ -21,6 +21,12 @@ const IPC_CHANNELS = {
   diagnosticsRunAdbTroubleshooting: "diagnostics.runAdbTroubleshooting",
   appsGetForegroundApp: "apps.getForegroundApp",
   actionsRunQuickAction: "actions.runQuickAction",
+  devicesUpdatePreferences: "devices.updatePreferences",
+  adbWakeAndReconnect: "adb.wakeAndReconnect",
+  scrcpyGetStatus: "scrcpy.getStatus",
+  scrcpyLaunch: "scrcpy.launch",
+  sideloadChooseApk: "sideload.chooseApk",
+  sideloadInstallApk: "sideload.installApk",
   connectionStateChanged: "events.connectionStateChanged",
   devicesChanged: "events.devicesChanged"
 };
@@ -45,6 +51,12 @@ const api = {
   runAdbTroubleshooting: () => electron.ipcRenderer.invoke(IPC_CHANNELS.diagnosticsRunAdbTroubleshooting),
   getForegroundApp: () => electron.ipcRenderer.invoke(IPC_CHANNELS.appsGetForegroundApp),
   runQuickAction: (id) => electron.ipcRenderer.invoke(IPC_CHANNELS.actionsRunQuickAction, id),
+  updateDevicePreferences: (input) => electron.ipcRenderer.invoke(IPC_CHANNELS.devicesUpdatePreferences, input),
+  wakeAndReconnect: () => electron.ipcRenderer.invoke(IPC_CHANNELS.adbWakeAndReconnect),
+  getScrcpyStatus: () => electron.ipcRenderer.invoke(IPC_CHANNELS.scrcpyGetStatus),
+  launchScrcpy: (input) => electron.ipcRenderer.invoke(IPC_CHANNELS.scrcpyLaunch, input),
+  chooseApkFile: () => electron.ipcRenderer.invoke(IPC_CHANNELS.sideloadChooseApk),
+  installApk: (input) => electron.ipcRenderer.invoke(IPC_CHANNELS.sideloadInstallApk, input),
   onConnectionStateChanged: (listener) => {
     const wrapped = (_event, state) => listener(state);
     electron.ipcRenderer.on(IPC_CHANNELS.connectionStateChanged, wrapped);

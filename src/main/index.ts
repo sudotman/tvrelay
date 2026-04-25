@@ -10,6 +10,8 @@ import { RemoteController } from './services/remoteController'
 import { AppController } from './services/appController'
 import { ActionController } from './services/actionController'
 import { NativeRemoteService } from './services/native/nativeRemoteService'
+import { ScrcpyController } from './services/scrcpyController'
+import { SideloadController } from './services/sideloadController'
 
 let mainWindow: BrowserWindow | null = null
 let deviceManager: DeviceManager | null = null
@@ -82,22 +84,26 @@ async function bootstrap(): Promise<void> {
   const remoteController = new RemoteController(deviceManager, adbClient, nativeRemoteService)
   const appController = new AppController(deviceManager, adbClient)
   const actionController = new ActionController(deviceManager, remoteController, appController)
+  const scrcpyController = new ScrcpyController(deviceManager)
+  const sideloadController = new SideloadController(deviceManager, adbClient)
 
   registerIpc({
     deviceManager,
     remoteController,
     appController,
     actionController,
+    scrcpyController,
+    sideloadController,
     adbLocator,
     adbClient,
     getMainWindow: () => mainWindow
   })
 
-  await createMainWindow()
-
-  void deviceManager.init().catch((error) => {
+  await deviceManager.init().catch((error) => {
     console.error('Device manager init failed, continuing with empty runtime state.', error)
   })
+
+  await createMainWindow()
 }
 
 function ensureBootstrapped(): Promise<void> {

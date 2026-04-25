@@ -92,6 +92,10 @@ export class AdbClient {
     await this.runSerial(serial, ['shell', 'input', 'keyevent', String(keyCode)])
   }
 
+  async wakeUp(serial: string): Promise<void> {
+    await this.sendKey(serial, 224)
+  }
+
   async sendText(serial: string, text: string): Promise<void> {
     const chunks = chunkAdbText(text)
 
@@ -149,6 +153,17 @@ export class AdbClient {
       '-d',
       `package:${packageName}`
     ])
+  }
+
+  async installApk(serial: string, apkPath: string): Promise<void> {
+    const { stdout, stderr } = await this.runRaw(['-s', serial, 'install', '-r', apkPath], {
+      timeoutMs: 180_000
+    })
+    const joined = `${stdout}\n${stderr}`.toLowerCase()
+
+    if (!joined.includes('success')) {
+      throw new Error((stdout || stderr || 'APK install failed.').trim())
+    }
   }
 
   async getForegroundApp(serial: string): Promise<ForegroundApp | null> {

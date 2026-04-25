@@ -8,14 +8,19 @@ import type {
   DeviceHealthStatus,
   DiscoveredNativeDevice,
   ForegroundApp,
+  InstallApkInput,
   LaunchableApp,
+  LaunchScrcpyInput,
   PairDeviceInput,
   QuickAction,
   RemoteCommand,
   ResolvedAdbEndpoints,
   SaveDeviceInput,
   SavedDevice,
-  SendTextInput
+  ScrcpyStatus,
+  SelectedApkFile,
+  SendTextInput,
+  UpdateDevicePreferencesInput
 } from './types'
 
 export interface TvRemoteApi {
@@ -39,6 +44,12 @@ export interface TvRemoteApi {
   runAdbTroubleshooting: () => Promise<DeviceHealthStatus | null>
   getForegroundApp: () => Promise<ForegroundApp | null>
   runQuickAction: (id: string) => Promise<ActionFeedback>
+  updateDevicePreferences: (input: UpdateDevicePreferencesInput) => Promise<SavedDevice>
+  wakeAndReconnect: () => Promise<ActionFeedback>
+  getScrcpyStatus: () => Promise<ScrcpyStatus>
+  launchScrcpy: (input: LaunchScrcpyInput) => Promise<ActionFeedback>
+  chooseApkFile: () => Promise<SelectedApkFile | null>
+  installApk: (input: InstallApkInput) => Promise<ActionFeedback>
   onConnectionStateChanged: (listener: (state: ConnectionState) => void) => () => void
   onDevicesChanged: (listener: (devices: SavedDevice[]) => void) => () => void
 }
@@ -64,6 +75,12 @@ export const IPC_CHANNELS = {
   diagnosticsRunAdbTroubleshooting: 'diagnostics.runAdbTroubleshooting',
   appsGetForegroundApp: 'apps.getForegroundApp',
   actionsRunQuickAction: 'actions.runQuickAction',
+  devicesUpdatePreferences: 'devices.updatePreferences',
+  adbWakeAndReconnect: 'adb.wakeAndReconnect',
+  scrcpyGetStatus: 'scrcpy.getStatus',
+  scrcpyLaunch: 'scrcpy.launch',
+  sideloadChooseApk: 'sideload.chooseApk',
+  sideloadInstallApk: 'sideload.installApk',
   connectionStateChanged: 'events.connectionStateChanged',
   devicesChanged: 'events.devicesChanged'
 } as const

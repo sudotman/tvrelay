@@ -1,4 +1,5 @@
 import type {
+  DevicePreferences,
   LaunchableApp,
   QuickAction,
   RecommendedAction,
@@ -37,6 +38,39 @@ export const shortcutLegend = [
   { keys: 'M', action: 'Mute' },
   { keys: '+ / -', action: 'Volume' }
 ]
+
+export const remoteCommandLabels: Record<RemoteCommand, string> = {
+  up: 'Up',
+  down: 'Down',
+  left: 'Left',
+  right: 'Right',
+  select: 'OK',
+  home: 'Home',
+  back: 'Back',
+  menu: 'Menu',
+  appSwitch: 'Recent Apps',
+  playPause: 'Play/Pause',
+  rewind: 'Rewind',
+  fastForward: 'Fast Forward',
+  next: 'Next',
+  previous: 'Previous',
+  power: 'Power',
+  sleep: 'Sleep',
+  volumeUp: 'Volume Up',
+  volumeDown: 'Volume Down',
+  mute: 'Mute',
+  enter: 'Enter',
+  delete: 'Delete'
+}
+
+export interface CommandPaletteItem {
+  id: string
+  label: string
+  detail: string
+  section: 'Navigation' | 'Remote' | 'Apps' | 'TVs' | 'Recommended' | 'Power Tools'
+  disabled?: boolean
+  disabledReason?: string
+}
 
 export function shouldHandleRemoteKey(target: EventTarget | null): boolean {
   if (typeof HTMLElement === 'undefined') {
@@ -108,4 +142,127 @@ export function groupApps(
 
 export function getQuickActionLabel(action: QuickAction): string {
   return action.label
+}
+
+export function getVisibleRemoteButtons<T extends { command: RemoteCommand }>(
+  buttons: T[],
+  preferences: DevicePreferences | undefined
+): T[] {
+  const hidden = new Set(preferences?.remoteLayout.hiddenCommands ?? [])
+  return buttons.filter((button) => !hidden.has(button.command))
+}
+
+export function getPinnedRemoteCommands(preferences: DevicePreferences | undefined): RemoteCommand[] {
+  return preferences?.remoteLayout.pinnedCommands ?? []
+}
+
+export function canAssignFavoriteHotkey(device: SavedDevice | null, packageName: string): boolean {
+  return Boolean(device?.favorites?.includes(packageName))
+}
+
+export function buildCommandPaletteItems(input: {
+  isConnected: boolean
+  appsReady: boolean
+  typingReady: boolean
+  scrcpyAvailable: boolean
+  hasAppCache: boolean
+  apps: LaunchableApp[]
+  devices: SavedDevice[]
+  quickActions: QuickAction[]
+  recommendedActions: RecommendedAction[]
+}): CommandPaletteItem[] {
+  const needsConnection = input.isConnected ? undefined : 'Connect a TV first.'
+  const needsApps = input.appsReady ? undefined : 'ADB app access is required.'
+
+  const items: CommandPaletteItem[] = [
+    { id: 'view:setup', label: 'Open Setup', detail: 'TVs, pairing, and connection.', section: 'Navigation' },
+    { id: 'view:remote', label: 'Open Remote', detail: 'Playback, typing, and transport.', section: 'Navigation' },
+    { id: 'view:apps', label: 'Open Apps', detail: 'Launch what is installed.', section: 'Navigation' },
+    {
+      id: 'system:wake',
+      label: 'Wake and Reconnect',
+      detail: 'Send ADB wake, then reconnect the selected TV.',
+      section: 'Power Tools',
+      disabled: Boolean(needsConnection || !input.typingReady),
+      disabledReason: needsConnection ?? 'ADB fallback is required.'
+    },
+    {
+      id: 'system:scrcpy',
+      label: 'Open Screen Mirror',
+      detail: 'Launch external scrcpy for this TV.',
+      section: 'Power Tools',
+      disabled: Boolean(needsConnection || !input.typingReady || !input.scrcpyAvailable),
+      disabledReason: needsConnection ?? (!input.typingReady ? 'ADB fallback is required.' : 'Install scrcpy first.')
+    },
+    {
+      id: 'system:sideload',
+      label: 'Install APK',
+      detail: 'Choose and install an APK through ADB.',
+      section: 'Power Tools',
+      disabled: Boolean(needsConnection || !input.typingReady),
+      disabledReason: needsConnection ?? 'ADB fallback is required.'
+    },
+    {
+      id: 'apps:fetch',
+      label: input.hasAppCache ? 'Refresh Apps' : 'Fetch Apps',
+      detail: 'Build the launchable app list for this TV.',
+      section: 'Apps',
+      disabled: Boolean(needsConnection || needsApps),
+      disabledReason: needsConnection ?? needsApps
+    }
+  ]
+
+  for (const command of ['home', 'back', 'mute', 'playPause', 'volumeUp', 'volumeDown'] as RemoteCommand[]) {
+    items.push({
+      id: `remote:${command}`,
+      label: remoteCommandLabels[command],
+      detail: 'Send this remote command to the active TV.',
+      section: 'Remote',
+      disabled: Boolean(needsConnection),
+      disabledReason: needsConnection
+    })
+  }
+
+  for (const action of input.quickActions) {
+    items.push({
+      id: `quick:${action.id}`,
+      label: action.label,
+      detail: action.detail,
+      section: action.kind === 'app' ? 'Apps' : 'Remote',
+      disabled: action.disabled,
+      disabledReason: action.disabled ? action.detail : undefined
+    })
+  }
+
+  for (const action of input.recommendedActions) {
+    const meta = getRecommendedActionMeta(action)
+    items.push({
+      id: `recommended:${action}`,
+      label: meta.label,
+      detail: meta.detail,
+      section: 'Recommended'
+    })
+  }
+
+  for (const app of input.apps.slice(0, 30)) {
+    items.push({
+      id: `app:${app.packageName}`,
+      label: app.displayName,
+      detail: `Launch ${app.packageName}`,
+      section: 'Apps',
+      disabled: Boolean(needsConnection || needsApps),
+      disabledReason: needsConnection ?? needsApps
+    })
+  }
+
+  for (const device of input.devices) {
+    items.push({
+      id: `device:${device.id}`,
+      label: `Connect ${device.name}`,
+      detail: `${device.host} over ${device.preferredBackend === 'native' ? 'Native Remote' : 'ADB'}`,
+      section: 'TVs'
+    })
+  }
+
+  return items
 }

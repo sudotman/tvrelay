@@ -2,7 +2,17 @@ export type DeviceConnectionMode = 'pair' | 'connect'
 export type ConnectionBackend = 'native' | 'adb'
 export type PreferredConnectionBackend = 'auto' | 'native' | 'adb'
 export type ActionFeedbackStatus = 'sent' | 'success' | 'blocked' | 'error'
-export type ActionFeedbackKind = 'remote' | 'app' | 'text' | 'favorite' | 'quick_action' | 'system'
+export type ActionFeedbackKind =
+  | 'remote'
+  | 'app'
+  | 'text'
+  | 'favorite'
+  | 'quick_action'
+  | 'system'
+  | 'scrcpy'
+  | 'sideload'
+export type FavoriteAppHotkey = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
+export type ScrcpyPreset = 'fast' | 'high_quality' | 'no_audio' | 'record'
 export type HealthIssueCode =
   | 'adb_missing'
   | 'adb_disabled_for_tv'
@@ -29,6 +39,17 @@ export type BackendHealthState =
 export interface RecentAppLaunch {
   packageName: string
   launchedAt: string
+}
+
+export interface RemoteLayoutPreferences {
+  pinnedCommands: RemoteCommand[]
+  hiddenCommands: RemoteCommand[]
+}
+
+export interface DevicePreferences {
+  remoteLayout: RemoteLayoutPreferences
+  appHotkeys: Partial<Record<FavoriteAppHotkey, string>>
+  scrcpyPreset: ScrcpyPreset
 }
 
 export interface ActionFeedback {
@@ -112,6 +133,7 @@ export interface SavedDevice {
   cachedApps?: CachedAppsSnapshot
   favorites?: string[]
   recentApps?: RecentAppLaunch[]
+  preferences?: DevicePreferences
   backendHealth?: {
     adb: BackendHealthSnapshot
     native: BackendHealthSnapshot
@@ -219,6 +241,7 @@ export interface DiagnosticsStatus {
   recommendedActions: RecommendedAction[]
   foregroundApp: ForegroundApp | null
   quickActions: QuickAction[]
+  scrcpy: ScrcpyStatus
 }
 
 export interface PairDeviceInput {
@@ -277,4 +300,31 @@ export interface SaveDeviceInput {
 
 export interface SendTextInput {
   text: string
+}
+
+export type UpdateDevicePreferencesInput = Partial<{
+  remoteLayout: Partial<RemoteLayoutPreferences>
+  appHotkeys: Partial<Record<FavoriteAppHotkey, string | null>>
+  scrcpyPreset: ScrcpyPreset
+}>
+
+export interface ScrcpyStatus {
+  available: boolean
+  path?: string
+  version?: string
+  installHint: string
+}
+
+export interface LaunchScrcpyInput {
+  preset: ScrcpyPreset
+}
+
+export interface SelectedApkFile {
+  id: string
+  name: string
+  size: number
+}
+
+export interface InstallApkInput {
+  id: string
 }

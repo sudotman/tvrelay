@@ -5,10 +5,13 @@ import type {
   CompleteNativePairingInput,
   ConnectDeviceInput,
   LaunchableApp,
+  InstallApkInput,
+  LaunchScrcpyInput,
   PairDeviceInput,
   RemoteCommand,
   SaveDeviceInput,
-  SendTextInput
+  SendTextInput,
+  UpdateDevicePreferencesInput
 } from '@shared/types'
 import type { AppController } from './services/appController'
 import type { ActionController } from './services/actionController'
@@ -16,12 +19,16 @@ import type { DeviceManager } from './services/deviceManager'
 import type { RemoteController } from './services/remoteController'
 import type { AdbLocator } from './services/adb/adbLocator'
 import type { AdbClient } from './services/adb/adbClient'
+import type { ScrcpyController } from './services/scrcpyController'
+import type { SideloadController } from './services/sideloadController'
 
 interface RegisterIpcOptions {
   deviceManager: DeviceManager
   remoteController: RemoteController
   appController: AppController
   actionController: ActionController
+  scrcpyController: ScrcpyController
+  sideloadController: SideloadController
   adbLocator: AdbLocator
   adbClient: AdbClient
   getMainWindow: () => BrowserWindow | null
@@ -33,6 +40,8 @@ export function registerIpc(options: RegisterIpcOptions): void {
     remoteController,
     appController,
     actionController,
+    scrcpyController,
+    sideloadController,
     adbLocator,
     adbClient,
     getMainWindow
@@ -82,6 +91,24 @@ export function registerIpc(options: RegisterIpcOptions): void {
 
   ipcMain.handle(IPC_CHANNELS.actionsRunQuickAction, (_event, id: string) => actionController.runQuickAction(id))
 
+  ipcMain.handle(IPC_CHANNELS.devicesUpdatePreferences, (_event, input: UpdateDevicePreferencesInput) =>
+    deviceManager.updateActiveDevicePreferences(input)
+  )
+
+  ipcMain.handle(IPC_CHANNELS.adbWakeAndReconnect, () => deviceManager.wakeAndReconnect())
+
+  ipcMain.handle(IPC_CHANNELS.scrcpyGetStatus, () => scrcpyController.getStatus())
+
+  ipcMain.handle(IPC_CHANNELS.scrcpyLaunch, (_event, input: LaunchScrcpyInput) =>
+    scrcpyController.launch(input.preset)
+  )
+
+  ipcMain.handle(IPC_CHANNELS.sideloadChooseApk, () => sideloadController.chooseApk(getMainWindow()))
+
+  ipcMain.handle(IPC_CHANNELS.sideloadInstallApk, (_event, input: InstallApkInput) =>
+    sideloadController.installApk(input.id)
+  )
+
   ipcMain.handle(IPC_CHANNELS.diagnosticsGetStatus, async () => {
     const adbInfo = await adbLocator.locate()
     const version =
@@ -107,7 +134,8 @@ export function registerIpc(options: RegisterIpcOptions): void {
       health,
       recommendedActions: health?.recommendedActions ?? [],
       foregroundApp: null,
-      quickActions
+      quickActions,
+      scrcpy: await scrcpyController.getStatus()
     }
   })
 

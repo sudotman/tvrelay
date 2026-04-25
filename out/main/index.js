@@ -1,9 +1,9 @@
 import path from "node:path";
 import fs$1 from "node:fs";
-import { ipcMain, app, BrowserWindow } from "electron";
+import { ipcMain, app, dialog, BrowserWindow } from "electron";
 import fs from "node:fs/promises";
 import os from "node:os";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import pkg from "node-apk";
@@ -36,6 +36,12 @@ const IPC_CHANNELS = {
   diagnosticsRunAdbTroubleshooting: "diagnostics.runAdbTroubleshooting",
   appsGetForegroundApp: "apps.getForegroundApp",
   actionsRunQuickAction: "actions.runQuickAction",
+  devicesUpdatePreferences: "devices.updatePreferences",
+  adbWakeAndReconnect: "adb.wakeAndReconnect",
+  scrcpyGetStatus: "scrcpy.getStatus",
+  scrcpyLaunch: "scrcpy.launch",
+  sideloadChooseApk: "sideload.chooseApk",
+  sideloadInstallApk: "sideload.installApk",
   connectionStateChanged: "events.connectionStateChanged",
   devicesChanged: "events.devicesChanged"
 };
@@ -45,6 +51,8 @@ function registerIpc(options) {
     remoteController,
     appController,
     actionController,
+    scrcpyController,
+    sideloadController,
     adbLocator,
     adbClient,
     getMainWindow
@@ -79,6 +87,21 @@ function registerIpc(options) {
   );
   ipcMain.handle(IPC_CHANNELS.appsGetForegroundApp, () => appController.getForegroundApp());
   ipcMain.handle(IPC_CHANNELS.actionsRunQuickAction, (_event, id) => actionController.runQuickAction(id));
+  ipcMain.handle(
+    IPC_CHANNELS.devicesUpdatePreferences,
+    (_event, input) => deviceManager2.updateActiveDevicePreferences(input)
+  );
+  ipcMain.handle(IPC_CHANNELS.adbWakeAndReconnect, () => deviceManager2.wakeAndReconnect());
+  ipcMain.handle(IPC_CHANNELS.scrcpyGetStatus, () => scrcpyController.getStatus());
+  ipcMain.handle(
+    IPC_CHANNELS.scrcpyLaunch,
+    (_event, input) => scrcpyController.launch(input.preset)
+  );
+  ipcMain.handle(IPC_CHANNELS.sideloadChooseApk, () => sideloadController.chooseApk(getMainWindow()));
+  ipcMain.handle(
+    IPC_CHANNELS.sideloadInstallApk,
+    (_event, input) => sideloadController.installApk(input.id)
+  );
   ipcMain.handle(IPC_CHANNELS.diagnosticsGetStatus, async () => {
     const adbInfo = await adbLocator.locate();
     const version = adbInfo.available ? cachedAdbVersion ??= await adbClient.version() : void 0;
@@ -100,7 +123,8 @@ function registerIpc(options) {
       health,
       recommendedActions: health?.recommendedActions ?? [],
       foregroundApp: null,
-      quickActions
+      quickActions,
+      scrcpy: await scrcpyController.getStatus()
     };
   });
   ipcMain.handle(IPC_CHANNELS.diagnosticsGetHealth, async () => {
@@ -337,7 +361,7 @@ function shouldAttemptReconnect(activeDevice, state, isReconnectInFlight) {
   return state.status === "disconnected" || state.status === "error";
 }
 const { Apk } = pkg;
-const execFileAsync = promisify(execFile);
+const execFileAsync$1 = promisify(execFile);
 class AdbClient {
   constructor(adbPath, defaultTimeoutMs = 8e3) {
     this.adbPath = adbPath;
@@ -395,6 +419,9 @@ ${stderr}`.toLowerCase();
   async sendKey(serial, keyCode) {
     await this.runSerial(serial, ["shell", "input", "keyevent", String(keyCode)]);
   }
+  async wakeUp(serial) {
+    await this.sendKey(serial, 224);
+  }
   async sendText(serial, text) {
     const chunks = chunkAdbText(text);
     for (const chunk of chunks) {
@@ -442,6 +469,16 @@ ${stderr}`.toLowerCase();
       "-d",
       `package:${packageName}`
     ]);
+  }
+  async installApk(serial, apkPath) {
+    const { stdout, stderr } = await this.runRaw(["-s", serial, "install", "-r", apkPath], {
+      timeoutMs: 18e4
+    });
+    const joined = `${stdout}
+${stderr}`.toLowerCase();
+    if (!joined.includes("success")) {
+      throw new Error((stdout || stderr || "APK install failed.").trim());
+    }
   }
   async getForegroundApp(serial) {
     const windowDump = await this.runSerial(serial, ["shell", "dumpsys", "window", "windows"], {
@@ -673,7 +710,7 @@ ${stderr}`.toLowerCase();
   }
   async runRaw(args, options) {
     try {
-      return await execFileAsync(this.adbPath, args, {
+      return await execFileAsync$1(this.adbPath, args, {
         timeout: options?.timeoutMs ?? this.defaultTimeoutMs,
         maxBuffer: 2 * 1024 * 1024
       });
@@ -699,6 +736,31 @@ class ElectronDeviceStore {
   }
 }
 const RECENT_APPS_LIMIT = 8;
+const HOTKEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+const DEFAULT_SCRCPY_PRESET = "fast";
+const REMOTE_COMMANDS = /* @__PURE__ */ new Set([
+  "up",
+  "down",
+  "left",
+  "right",
+  "select",
+  "home",
+  "back",
+  "menu",
+  "appSwitch",
+  "playPause",
+  "rewind",
+  "fastForward",
+  "next",
+  "previous",
+  "power",
+  "sleep",
+  "volumeUp",
+  "volumeDown",
+  "mute",
+  "enter",
+  "delete"
+]);
 function normalizeHostKey(host) {
   const normalized = host?.trim().toLowerCase();
   return normalized ? normalized : null;
@@ -714,6 +776,33 @@ function canConnectViaNative(device) {
 }
 function canUseAdb(device) {
   return device.adbEnabled !== false;
+}
+function filterRemoteCommands(commands = []) {
+  const unique = /* @__PURE__ */ new Set();
+  for (const command of commands) {
+    if (typeof command === "string" && REMOTE_COMMANDS.has(command)) {
+      unique.add(command);
+    }
+  }
+  return [...unique];
+}
+function normalizeDevicePreferences(preferences, favorites = []) {
+  const favoriteSet = new Set(favorites);
+  const appHotkeys = {};
+  for (const hotkey of HOTKEYS) {
+    const packageName = preferences?.appHotkeys?.[hotkey];
+    if (packageName && favoriteSet.has(packageName)) {
+      appHotkeys[hotkey] = packageName;
+    }
+  }
+  return {
+    remoteLayout: {
+      pinnedCommands: filterRemoteCommands(preferences?.remoteLayout?.pinnedCommands),
+      hiddenCommands: filterRemoteCommands(preferences?.remoteLayout?.hiddenCommands)
+    },
+    appHotkeys,
+    scrcpyPreset: preferences?.scrcpyPreset ?? DEFAULT_SCRCPY_PRESET
+  };
 }
 function getBackendOrder(device) {
   const preferred = device.preferredBackend ?? "adb";
@@ -1154,14 +1243,75 @@ class DeviceManager extends EventEmitter {
       throw new Error("Connect to a TV before pinning favorite apps.");
     }
     const favorites = new Set(activeDevice.favorites ?? []);
+    const preferences = normalizeDevicePreferences(activeDevice.preferences, activeDevice.favorites);
     if (favorites.has(packageName)) {
       favorites.delete(packageName);
+      for (const hotkey of HOTKEYS) {
+        if (preferences.appHotkeys[hotkey] === packageName) {
+          delete preferences.appHotkeys[hotkey];
+        }
+      }
     } else {
       favorites.add(packageName);
     }
     return this.replaceDevice(activeDevice.id, {
-      favorites: [...favorites].sort()
+      favorites: [...favorites].sort(),
+      preferences
     });
+  }
+  async updateActiveDevicePreferences(input) {
+    const activeDevice = this.getActiveDevice();
+    if (!activeDevice) {
+      throw new Error("Connect to a TV before updating remote preferences.");
+    }
+    const favorites = activeDevice.favorites ?? [];
+    const current = normalizeDevicePreferences(activeDevice.preferences, favorites);
+    const next = {
+      ...current,
+      remoteLayout: {
+        pinnedCommands: input.remoteLayout?.pinnedCommands ? filterRemoteCommands(input.remoteLayout.pinnedCommands) : current.remoteLayout.pinnedCommands,
+        hiddenCommands: input.remoteLayout?.hiddenCommands ? filterRemoteCommands(input.remoteLayout.hiddenCommands) : current.remoteLayout.hiddenCommands
+      },
+      appHotkeys: {
+        ...current.appHotkeys
+      },
+      scrcpyPreset: input.scrcpyPreset ?? current.scrcpyPreset
+    };
+    for (const [hotkey, packageName] of Object.entries(input.appHotkeys ?? {})) {
+      if (!HOTKEYS.includes(hotkey)) {
+        continue;
+      }
+      if (!packageName) {
+        delete next.appHotkeys[hotkey];
+        continue;
+      }
+      if (!favorites.includes(packageName)) {
+        throw new Error("Only pinned apps can be assigned to number hotkeys.");
+      }
+      for (const existingHotkey of HOTKEYS) {
+        if (next.appHotkeys[existingHotkey] === packageName) {
+          delete next.appHotkeys[existingHotkey];
+        }
+      }
+      next.appHotkeys[hotkey] = packageName;
+    }
+    return this.replaceDevice(activeDevice.id, { preferences: normalizeDevicePreferences(next, favorites) });
+  }
+  async wakeAndReconnect() {
+    const activeDevice = this.getActiveDevice();
+    if (!activeDevice) {
+      throw new Error("Connect to a TV before using wake and reconnect.");
+    }
+    await this.withAdbAccess((serial) => this.adbClient.wakeUp(serial));
+    const state = await this.connectDevice({ id: activeDevice.id });
+    return {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      status: state.status === "connected" ? "success" : "error",
+      kind: "system",
+      title: state.status === "connected" ? "Wake and reconnect finished" : "Wake sent, reconnect needs attention",
+      detail: state.status === "connected" ? `${activeDevice.name} is awake and connected over ${state.backend === "native" ? "Native Remote" : "ADB"}.` : state.message ?? "Wake was sent, but the TV did not reconnect cleanly."
+    };
   }
   async recordAppLaunch(packageName) {
     const activeDevice = this.getActiveDevice();
@@ -1818,6 +1968,7 @@ class DeviceManager extends EventEmitter {
       cachedApps: input.cachedApps,
       favorites: [...new Set(input.favorites ?? [])],
       recentApps: (input.recentApps ?? []).slice(0, RECENT_APPS_LIMIT),
+      preferences: normalizeDevicePreferences(input.preferences, input.favorites),
       backendHealth: {
         adb: createBackendHealthSnapshot({
           ...input.backendHealth?.adb,
@@ -2511,6 +2662,168 @@ class NativeRemoteService extends EventEmitter {
     return new Error(fallbackMessage);
   }
 }
+const execFileAsync = promisify(execFile);
+const INSTALL_HINT = process.platform === "darwin" ? "Install scrcpy with Homebrew: brew install scrcpy." : process.platform === "win32" ? "Install scrcpy with winget: winget install --exact Genymobile.scrcpy." : "Install scrcpy from your package manager, then make sure it is on PATH.";
+function createFeedback$1(input) {
+  return {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+    ...input
+  };
+}
+function candidatePaths() {
+  const candidates = ["scrcpy"];
+  if (process.platform === "darwin") {
+    candidates.push("/opt/homebrew/bin/scrcpy", "/usr/local/bin/scrcpy");
+  }
+  if (process.platform === "win32") {
+    candidates.push(
+      "scrcpy.exe",
+      "C:\\Program Files\\scrcpy\\scrcpy.exe",
+      "C:\\Program Files (x86)\\scrcpy\\scrcpy.exe"
+    );
+  }
+  return [...new Set(candidates)];
+}
+function parseVersion(output) {
+  return output.split(/\r?\n/).map((line) => line.trim()).find((line) => line.toLowerCase().startsWith("scrcpy")) ?? "scrcpy detected";
+}
+class ScrcpyController {
+  constructor(deviceManager2) {
+    this.deviceManager = deviceManager2;
+  }
+  cachedStatus = null;
+  async getStatus(forceRefresh = false) {
+    if (this.cachedStatus && !forceRefresh) {
+      return this.cachedStatus;
+    }
+    for (const candidate of candidatePaths()) {
+      try {
+        const { stdout, stderr } = await execFileAsync(candidate, ["--version"], {
+          timeout: 6e3,
+          maxBuffer: 512 * 1024
+        });
+        this.cachedStatus = {
+          available: true,
+          path: candidate,
+          version: parseVersion(`${stdout}
+${stderr}`),
+          installHint: INSTALL_HINT
+        };
+        return this.cachedStatus;
+      } catch {
+      }
+    }
+    this.cachedStatus = {
+      available: false,
+      installHint: INSTALL_HINT
+    };
+    return this.cachedStatus;
+  }
+  async launch(preset) {
+    const status = await this.getStatus();
+    if (!status.available || !status.path) {
+      return createFeedback$1({
+        status: "blocked",
+        kind: "scrcpy",
+        title: "scrcpy is not installed",
+        detail: status.installHint
+      });
+    }
+    const activeDevice = this.deviceManager.getActiveDevice();
+    if (!activeDevice) {
+      throw new Error("Connect to a TV before opening scrcpy.");
+    }
+    const args = await this.deviceManager.withAdbAccess(async (serial) => [
+      "-s",
+      serial,
+      ...this.getPresetArgs(preset)
+    ]);
+    const child = spawn(status.path, args, {
+      detached: true,
+      stdio: "ignore"
+    });
+    child.unref();
+    return createFeedback$1({
+      status: "sent",
+      kind: "scrcpy",
+      title: "scrcpy launched",
+      detail: preset === "record" ? "scrcpy opened in recording mode using the active TV over ADB." : "scrcpy opened as a companion mirror using the active TV over ADB."
+    });
+  }
+  getPresetArgs(preset) {
+    if (preset === "fast") {
+      return ["--max-size", "1280", "--max-fps", "30", "--no-audio"];
+    }
+    if (preset === "high_quality") {
+      return ["--max-size", "1920", "--max-fps", "60"];
+    }
+    if (preset === "no_audio") {
+      return ["--no-audio"];
+    }
+    const videosPath = app.getPath("videos") || app.getPath("desktop");
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+    return ["--record", path.join(videosPath, `android-tv-${timestamp}.mkv`)];
+  }
+}
+function createFeedback(input) {
+  return {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+    ...input
+  };
+}
+class SideloadController {
+  constructor(deviceManager2, adbClient) {
+    this.deviceManager = deviceManager2;
+    this.adbClient = adbClient;
+  }
+  selections = /* @__PURE__ */ new Map();
+  async chooseApk(parentWindow) {
+    const options = {
+      title: "Choose APK to install",
+      properties: ["openFile"],
+      filters: [{ name: "Android APK", extensions: ["apk"] }]
+    };
+    const result = parentWindow ? await dialog.showOpenDialog(parentWindow, options) : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+    const apkPath = result.filePaths[0];
+    this.assertApkPath(apkPath);
+    const stat = await fs.stat(apkPath);
+    if (!stat.isFile()) {
+      throw new Error("Choose a valid APK file.");
+    }
+    const id = randomUUID();
+    this.selections.set(id, apkPath);
+    return {
+      id,
+      name: path.basename(apkPath),
+      size: stat.size
+    };
+  }
+  async installApk(selectionId) {
+    const apkPath = this.selections.get(selectionId);
+    if (!apkPath) {
+      throw new Error("Choose an APK before installing.");
+    }
+    this.assertApkPath(apkPath);
+    await this.deviceManager.withAdbAccess((serial) => this.adbClient.installApk(serial, apkPath));
+    this.selections.delete(selectionId);
+    return createFeedback({
+      status: "success",
+      kind: "sideload",
+      title: "APK installed",
+      detail: `${path.basename(apkPath)} was installed on the selected TV through ADB.`
+    });
+  }
+  assertApkPath(apkPath) {
+    if (path.extname(apkPath).toLowerCase() !== ".apk") {
+      throw new Error("Only .apk files can be installed.");
+    }
+  }
+}
 let mainWindow = null;
 let deviceManager = null;
 let bootstrapPromise = null;
@@ -2570,19 +2883,23 @@ async function bootstrap() {
   const remoteController = new RemoteController(deviceManager, adbClient, nativeRemoteService);
   const appController = new AppController(deviceManager, adbClient);
   const actionController = new ActionController(deviceManager, remoteController, appController);
+  const scrcpyController = new ScrcpyController(deviceManager);
+  const sideloadController = new SideloadController(deviceManager, adbClient);
   registerIpc({
     deviceManager,
     remoteController,
     appController,
     actionController,
+    scrcpyController,
+    sideloadController,
     adbLocator,
     adbClient,
     getMainWindow: () => mainWindow
   });
-  await createMainWindow();
-  void deviceManager.init().catch((error) => {
+  await deviceManager.init().catch((error) => {
     console.error("Device manager init failed, continuing with empty runtime state.", error);
   });
+  await createMainWindow();
 }
 function ensureBootstrapped() {
   if (bootstrapPromise) {

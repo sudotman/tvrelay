@@ -2,14 +2,17 @@ import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import { Bonjour } from 'bonjour-service'
 import type {
+  ActionFeedback,
   BackendHealthSnapshot,
   BeginNativePairingInput,
   ConnectDeviceInput,
   ConnectionBackend,
   ConnectionState,
+  DevicePreferences,
   DeviceHealthStatus,
   DiscoveredAdbService,
   DiscoveredNativeDevice,
+  FavoriteAppHotkey,
   HealthIssue,
   NativeRemoteConfig,
   PairDeviceInput,
@@ -17,7 +20,9 @@ import type {
   RecommendedAction,
   ResolvedAdbEndpoints,
   SaveDeviceInput,
-  SavedDevice
+  SavedDevice,
+  ScrcpyPreset,
+  UpdateDevicePreferencesInput
 } from '@shared/types'
 import { buildSerial, deriveConnectionState, shouldAttemptReconnect } from './adb/parsers'
 import type { AdbClient } from './adb/adbClient'
@@ -30,6 +35,31 @@ type DeviceManagerEvents = {
 }
 
 const RECENT_APPS_LIMIT = 8
+const HOTKEYS: FavoriteAppHotkey[] = ['1', '2', '3', '4', '5', '6', '7', '8', '9']
+const DEFAULT_SCRCPY_PRESET: ScrcpyPreset = 'fast'
+const REMOTE_COMMANDS = new Set([
+  'up',
+  'down',
+  'left',
+  'right',
+  'select',
+  'home',
+  'back',
+  'menu',
+  'appSwitch',
+  'playPause',
+  'rewind',
+  'fastForward',
+  'next',
+  'previous',
+  'power',
+  'sleep',
+  'volumeUp',
+  'volumeDown',
+  'mute',
+  'enter',
+  'delete'
+])
 
 function normalizeHostKey(host?: string): string | null {
   const normalized = host?.trim().toLowerCase()
@@ -50,6 +80,45 @@ function canConnectViaNative(device: SavedDevice): boolean {
 
 function canUseAdb(device: SavedDevice): boolean {
   return device.adbEnabled !== false
+}
+
+function filterRemoteCommands(
+  commands: unknown[] = []
+): NonNullable<SavedDevice['preferences']>['remoteLayout']['pinnedCommands'] {
+  const unique = new Set<string>()
+
+  for (const command of commands) {
+    if (typeof command === 'string' && REMOTE_COMMANDS.has(command)) {
+      unique.add(command)
+    }
+  }
+
+  return [...unique] as NonNullable<SavedDevice['preferences']>['remoteLayout']['pinnedCommands']
+}
+
+function normalizeDevicePreferences(
+  preferences: SavedDevice['preferences'] | undefined,
+  favorites: string[] = []
+): DevicePreferences {
+  const favoriteSet = new Set(favorites)
+  const appHotkeys: Partial<Record<FavoriteAppHotkey, string>> = {}
+
+  for (const hotkey of HOTKEYS) {
+    const packageName = preferences?.appHotkeys?.[hotkey]
+
+    if (packageName && favoriteSet.has(packageName)) {
+      appHotkeys[hotkey] = packageName
+    }
+  }
+
+  return {
+    remoteLayout: {
+      pinnedCommands: filterRemoteCommands(preferences?.remoteLayout?.pinnedCommands),
+      hiddenCommands: filterRemoteCommands(preferences?.remoteLayout?.hiddenCommands)
+    },
+    appHotkeys,
+    scrcpyPreset: preferences?.scrcpyPreset ?? DEFAULT_SCRCPY_PRESET
+  }
 }
 
 function getBackendOrder(device: SavedDevice): ConnectionBackend[] {
@@ -157,6 +226,7 @@ interface StoredDeviceDraft {
   cachedApps?: SavedDevice['cachedApps']
   favorites?: SavedDevice['favorites']
   recentApps?: SavedDevice['recentApps']
+  preferences?: SavedDevice['preferences']
   backendHealth?: SavedDevice['backendHealth']
 }
 
@@ -635,15 +705,97 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     const favorites = new Set(activeDevice.favorites ?? [])
 
+    const preferences = normalizeDevicePreferences(activeDevice.preferences, activeDevice.favorites)
+
     if (favorites.has(packageName)) {
       favorites.delete(packageName)
+      for (const hotkey of HOTKEYS) {
+        if (preferences.appHotkeys[hotkey] === packageName) {
+          delete preferences.appHotkeys[hotkey]
+        }
+      }
     } else {
       favorites.add(packageName)
     }
 
     return this.replaceDevice(activeDevice.id, {
-      favorites: [...favorites].sort()
+      favorites: [...favorites].sort(),
+      preferences
     })
+  }
+
+  async updateActiveDevicePreferences(input: UpdateDevicePreferencesInput): Promise<SavedDevice> {
+    const activeDevice = this.getActiveDevice()
+
+    if (!activeDevice) {
+      throw new Error('Connect to a TV before updating remote preferences.')
+    }
+
+    const favorites = activeDevice.favorites ?? []
+    const current = normalizeDevicePreferences(activeDevice.preferences, favorites)
+    const next: DevicePreferences = {
+      ...current,
+      remoteLayout: {
+        pinnedCommands: input.remoteLayout?.pinnedCommands
+          ? filterRemoteCommands(input.remoteLayout.pinnedCommands)
+          : current.remoteLayout.pinnedCommands,
+        hiddenCommands: input.remoteLayout?.hiddenCommands
+          ? filterRemoteCommands(input.remoteLayout.hiddenCommands)
+          : current.remoteLayout.hiddenCommands
+      },
+      appHotkeys: {
+        ...current.appHotkeys
+      },
+      scrcpyPreset: input.scrcpyPreset ?? current.scrcpyPreset
+    }
+
+    for (const [hotkey, packageName] of Object.entries(input.appHotkeys ?? {})) {
+      if (!HOTKEYS.includes(hotkey as FavoriteAppHotkey)) {
+        continue
+      }
+
+      if (!packageName) {
+        delete next.appHotkeys[hotkey as FavoriteAppHotkey]
+        continue
+      }
+
+      if (!favorites.includes(packageName)) {
+        throw new Error('Only pinned apps can be assigned to number hotkeys.')
+      }
+
+      for (const existingHotkey of HOTKEYS) {
+        if (next.appHotkeys[existingHotkey] === packageName) {
+          delete next.appHotkeys[existingHotkey]
+        }
+      }
+
+      next.appHotkeys[hotkey as FavoriteAppHotkey] = packageName
+    }
+
+    return this.replaceDevice(activeDevice.id, { preferences: normalizeDevicePreferences(next, favorites) })
+  }
+
+  async wakeAndReconnect(): Promise<ActionFeedback> {
+    const activeDevice = this.getActiveDevice()
+
+    if (!activeDevice) {
+      throw new Error('Connect to a TV before using wake and reconnect.')
+    }
+
+    await this.withAdbAccess((serial) => this.adbClient.wakeUp(serial))
+    const state = await this.connectDevice({ id: activeDevice.id })
+
+    return {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      createdAt: new Date().toISOString(),
+      status: state.status === 'connected' ? 'success' : 'error',
+      kind: 'system',
+      title: state.status === 'connected' ? 'Wake and reconnect finished' : 'Wake sent, reconnect needs attention',
+      detail:
+        state.status === 'connected'
+          ? `${activeDevice.name} is awake and connected over ${state.backend === 'native' ? 'Native Remote' : 'ADB'}.`
+          : state.message ?? 'Wake was sent, but the TV did not reconnect cleanly.'
+    }
   }
 
   async recordAppLaunch(packageName: string): Promise<SavedDevice> {
@@ -1424,6 +1576,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       cachedApps: input.cachedApps,
       favorites: [...new Set(input.favorites ?? [])],
       recentApps: (input.recentApps ?? []).slice(0, RECENT_APPS_LIMIT),
+      preferences: normalizeDevicePreferences(input.preferences, input.favorites),
       backendHealth: {
         adb: createBackendHealthSnapshot({
           ...input.backendHealth?.adb,

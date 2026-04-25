@@ -6,15 +6,23 @@ import type {
   ConnectionState,
   DiagnosticsStatus,
   DiscoveredNativeDevice,
+  FavoriteAppHotkey,
   LaunchableApp,
   PreferredConnectionBackend,
   RecommendedAction,
   ResolvedAdbEndpoints,
   RemoteCommand,
-  SavedDevice
+  SavedDevice,
+  ScrcpyPreset,
+  SelectedApkFile
 } from '@shared/types'
 import {
+  buildCommandPaletteItems,
+  canAssignFavoriteHotkey,
+  CommandPaletteItem,
   getRecommendedActionMeta,
+  getPinnedRemoteCommands,
+  getVisibleRemoteButtons,
   groupApps,
   keyBindings,
   shortcutLegend,
@@ -71,6 +79,14 @@ const soundRemoteButtons: RemoteButton[] = [
   { label: 'Vol +', command: 'volumeUp' },
   { label: 'Vol -', command: 'volumeDown' }
 ]
+
+const favoriteHotkeys: FavoriteAppHotkey[] = ['1', '2', '3', '4', '5', '6', '7', '8', '9']
+const scrcpyPresetLabels: Record<ScrcpyPreset, string> = {
+  fast: 'Fast',
+  high_quality: 'High Quality',
+  no_audio: 'No Audio',
+  record: 'Record'
+}
 
 const initialForm: SetupFormState = {
   name: '',
@@ -259,6 +275,23 @@ function getNativeSetupState(input: {
   }
 }
 
+function filterPaletteItems(items: CommandPaletteItem[], query: string): CommandPaletteItem[] {
+  const normalized = query.trim().toLowerCase()
+
+  if (!normalized) {
+    return items.slice(0, 18)
+  }
+
+  return items
+    .filter((item) =>
+      [item.label, item.detail, item.section]
+        .join(' ')
+        .toLowerCase()
+        .includes(normalized)
+    )
+    .slice(0, 24)
+}
+
 function EmptyWorkspace(props: {
   eyebrow: string
   title: string
@@ -300,24 +333,46 @@ export function App() {
   const [pendingAppPackage, setPendingAppPackage] = useState<string | null>(null)
   const [cooldownTick, setCooldownTick] = useState(Date.now())
   const [foregroundAppState, setForegroundAppState] = useState(diagnostics?.foregroundApp ?? null)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [paletteQuery, setPaletteQuery] = useState('')
+  const [selectedApk, setSelectedApk] = useState<SelectedApkFile | null>(null)
   const deferredAppsQuery = useDeferredValue(appsQuery)
+  const deferredPaletteQuery = useDeferredValue(paletteQuery)
   const diagnosticsRequestRef = useRef(0)
   const diagnosticsInFlightRef = useRef<Promise<void> | null>(null)
   const diagnosticsQueuedRef = useRef(false)
   const foregroundRequestRef = useRef(0)
 
-  const activeDevice = diagnostics?.activeDevice ?? null
+  const fallbackActiveDevice =
+    connectionState.deviceId
+      ? devices.find((device) => device.id === connectionState.deviceId) ?? null
+      : null
+  const activeDevice = diagnostics?.activeDevice ?? fallbackActiveDevice
   const activeAppsCache = activeDevice?.cachedApps ?? null
-  const activeBackend = diagnostics?.activeBackend ?? null
+  const activeBackend = diagnostics?.activeBackend ?? connectionState.backend ?? null
+  const activePreferences = activeDevice?.preferences
   const pendingNativePairing = diagnostics?.pendingNativePairing ?? null
   const health = diagnostics?.health ?? null
   const recommendedActions = diagnostics?.recommendedActions ?? []
   const foregroundApp = foregroundAppState ?? diagnostics?.foregroundApp ?? null
-  const capabilities = diagnostics?.capabilities ?? {
+  const scrcpyStatus = diagnostics?.scrcpy ?? {
+    available: false,
+    installHint: 'Install scrcpy and make sure it is on PATH.'
+  }
+  const rawCapabilities = diagnostics?.capabilities ?? {
     nativeRemote: false,
     adbFallback: false,
     typing: false,
     apps: false
+  }
+  const adbReadyFromConnectedSession = connectionState.status === 'connected' && activeBackend === 'adb'
+  const adbReadyFromHealth = Boolean(activeDevice?.backendHealth?.adb.ready)
+  const adbFallbackReady = rawCapabilities.adbFallback || adbReadyFromConnectedSession || adbReadyFromHealth
+  const capabilities = {
+    nativeRemote: rawCapabilities.nativeRemote || Boolean(activeDevice?.nativeRemote?.certificate),
+    adbFallback: adbFallbackReady,
+    typing: rawCapabilities.typing || adbFallbackReady,
+    apps: rawCapabilities.apps || adbFallbackReady
   }
   const waitingForNativeCode = Boolean(
     pendingNativePairing || (connectionState.status === 'pairing' && connectionState.backend === 'native')
@@ -347,8 +402,27 @@ export function App() {
   const compactAdbLabel = form.adbMode === 'pair' ? 'Pair ADB' : 'Connect ADB'
   const appsAreLoading = busy === 'apps'
   const appSections = groupApps(apps, activeDevice, deferredAppsQuery)
+  const allRemoteButtons = [...coreRemoteButtons, ...mediaRemoteButtons, ...soundRemoteButtons]
+  const pinnedRemoteButtons = getPinnedRemoteCommands(activePreferences)
+    .map((command) => allRemoteButtons.find((button) => button.command === command))
+    .filter((button): button is RemoteButton => Boolean(button))
+  const visibleCoreRemoteButtons = getVisibleRemoteButtons(coreRemoteButtons, activePreferences)
+  const visibleMediaRemoteButtons = getVisibleRemoteButtons(mediaRemoteButtons, activePreferences)
+  const visibleSoundRemoteButtons = getVisibleRemoteButtons(soundRemoteButtons, activePreferences)
   const visibleAppCount =
     appSections.favorites.length + appSections.recents.length + appSections.others.length
+  const paletteItems = buildCommandPaletteItems({
+    isConnected,
+    appsReady: capabilities.apps,
+    typingReady: capabilities.typing,
+    scrcpyAvailable: scrcpyStatus.available,
+    hasAppCache: Boolean(activeAppsCache),
+    apps,
+    devices,
+    quickActions: diagnostics?.quickActions ?? [],
+    recommendedActions
+  })
+  const visiblePaletteItems = filterPaletteItems(paletteItems, deferredPaletteQuery)
   const latestAction = actionFeed[0] ?? null
   const activeView = viewTabs.find((item) => item.id === tab) ?? viewTabs[0]
   const viewStatus = (() => {
@@ -620,6 +694,38 @@ export function App() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [connectionState.status, tab])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const isPaletteShortcut = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k'
+
+      if (isPaletteShortcut) {
+        event.preventDefault()
+        setPaletteOpen(true)
+        setPaletteQuery('')
+        return
+      }
+
+      if (paletteOpen || !shouldHandleRemoteKey(event.target) || connectionState.status !== 'connected') {
+        return
+      }
+
+      if (!favoriteHotkeys.includes(event.key as FavoriteAppHotkey)) {
+        return
+      }
+
+      const packageName = activePreferences?.appHotkeys?.[event.key as FavoriteAppHotkey]
+      if (!packageName) {
+        return
+      }
+
+      event.preventDefault()
+      void launchPackageShortcut(packageName)
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [activePreferences, connectionState.status, paletteOpen])
 
   useEffect(() => {
     const hasActiveCooldown = Object.values(commandCooldowns).some((value) => (value ?? 0) > Date.now())
@@ -1120,6 +1226,154 @@ export function App() {
     }
   }
 
+  async function updatePreferences(input: Parameters<typeof window.tvRemoteApi.updateDevicePreferences>[0]): Promise<void> {
+    try {
+      await window.tvRemoteApi.updateDevicePreferences(input)
+      await refreshDiagnostics()
+    } catch (error) {
+      publishErrorFeedback('Could not update TV preferences.', error, 'system')
+    }
+  }
+
+  async function assignFavoriteHotkey(packageName: string, hotkey: FavoriteAppHotkey | ''): Promise<void> {
+    if (!hotkey) {
+      const currentHotkey = favoriteHotkeys.find((key) => activePreferences?.appHotkeys?.[key] === packageName)
+      if (currentHotkey) {
+        await updatePreferences({ appHotkeys: { [currentHotkey]: null } })
+      }
+      return
+    }
+
+    await updatePreferences({ appHotkeys: { [hotkey]: packageName } })
+  }
+
+  async function launchPackageShortcut(packageName: string): Promise<void> {
+    setPendingAppPackage(packageName)
+    try {
+      const feedback = await window.tvRemoteApi.runQuickAction(`launch:${packageName}`)
+      publishFeedback({
+        ...feedback,
+        detail:
+          activeBackend === 'native'
+            ? 'Favorite hotkey launched this app through ADB fallback.'
+            : 'Favorite hotkey launched this app through ADB.'
+      })
+      await refreshDiagnostics()
+    } catch (error) {
+      publishErrorFeedback('Favorite hotkey failed.', error, 'app', { appPackage: packageName })
+    } finally {
+      setPendingAppPackage((current) => (current === packageName ? null : current))
+    }
+  }
+
+  async function togglePinnedCommand(command: RemoteCommand): Promise<void> {
+    const current = activePreferences?.remoteLayout.pinnedCommands ?? []
+    const next = current.includes(command) ? current.filter((item) => item !== command) : [...current, command]
+    await updatePreferences({ remoteLayout: { pinnedCommands: next } })
+  }
+
+  async function toggleHiddenCommand(command: RemoteCommand): Promise<void> {
+    const current = activePreferences?.remoteLayout.hiddenCommands ?? []
+    const next = current.includes(command) ? current.filter((item) => item !== command) : [...current, command]
+    await updatePreferences({ remoteLayout: { hiddenCommands: next } })
+  }
+
+  async function resetRemoteLayout(): Promise<void> {
+    await updatePreferences({ remoteLayout: { pinnedCommands: [], hiddenCommands: [] } })
+  }
+
+  async function setScrcpyPreset(preset: ScrcpyPreset): Promise<void> {
+    await updatePreferences({ scrcpyPreset: preset })
+  }
+
+  async function wakeAndReconnect(): Promise<void> {
+    setBusy('wake')
+    try {
+      const feedback = await window.tvRemoteApi.wakeAndReconnect()
+      publishFeedback({
+        ...feedback,
+        detail:
+          activeBackend === 'native'
+            ? `${feedback.detail} Wake used ADB fallback because native remote is not reliable for recovery.`
+            : feedback.detail
+      })
+      await refreshDiagnostics()
+    } catch (error) {
+      publishErrorFeedback('Wake and reconnect failed.', error, 'system')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function chooseApkFile(): Promise<void> {
+    setBusy('choose-apk')
+    try {
+      const selection = await window.tvRemoteApi.chooseApkFile()
+      if (selection) {
+        setSelectedApk(selection)
+        setStatusMessage(`${selection.name} is ready to install through ADB.`)
+      }
+    } catch (error) {
+      publishErrorFeedback('Could not choose APK.', error, 'sideload')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function installSelectedApk(): Promise<void> {
+    if (!selectedApk) {
+      return
+    }
+
+    setBusy('install-apk')
+    try {
+      const feedback = await window.tvRemoteApi.installApk({ id: selectedApk.id })
+      publishFeedback({
+        ...feedback,
+        detail:
+          activeBackend === 'native'
+            ? `${feedback.detail} Install used ADB fallback because native remote cannot sideload apps.`
+            : feedback.detail
+      })
+      setSelectedApk(null)
+      await refreshDiagnostics()
+    } catch (error) {
+      publishErrorFeedback('APK install failed.', error, 'sideload')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function launchScrcpy(): Promise<void> {
+    setBusy('scrcpy')
+    try {
+      const preset = activePreferences?.scrcpyPreset ?? 'fast'
+      const feedback = await window.tvRemoteApi.launchScrcpy({ preset })
+      publishFeedback({
+        ...feedback,
+        detail:
+          activeBackend === 'native' && feedback.status !== 'blocked'
+            ? `${feedback.detail} scrcpy used ADB fallback because native remote cannot mirror the screen.`
+            : feedback.detail
+      })
+      await refreshDiagnostics()
+    } catch (error) {
+      publishErrorFeedback('Could not launch scrcpy.', error, 'scrcpy')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function runQuickAction(id: string): Promise<void> {
+    try {
+      const feedback = await window.tvRemoteApi.runQuickAction(id)
+      publishFeedback(feedback)
+      await refreshDiagnostics()
+    } catch (error) {
+      publishErrorFeedback('Quick action failed.', error, 'quick_action', { actionId: id })
+    }
+  }
+
   async function runAdbTroubleshooter(): Promise<void> {
     setBusy('troubleshoot')
     try {
@@ -1161,6 +1415,72 @@ export function App() {
           await loadApps()
         }
         break
+    }
+  }
+
+  async function runPaletteItem(item: CommandPaletteItem): Promise<void> {
+    if (item.disabled) {
+      setStatusMessage(item.disabledReason ?? item.detail)
+      return
+    }
+
+    setPaletteOpen(false)
+
+    if (item.id.startsWith('view:')) {
+      setTab(item.id.slice('view:'.length) as TabId)
+      return
+    }
+
+    if (item.id.startsWith('remote:')) {
+      await sendRemoteCommand(item.id.slice('remote:'.length) as RemoteCommand)
+      return
+    }
+
+    if (item.id.startsWith('quick:')) {
+      await runQuickAction(item.id.slice('quick:'.length))
+      return
+    }
+
+    if (item.id.startsWith('recommended:')) {
+      await runRecommendedAction(item.id.slice('recommended:'.length) as RecommendedAction)
+      return
+    }
+
+    if (item.id.startsWith('app:')) {
+      const packageName = item.id.slice('app:'.length)
+      const app = apps.find((candidate) => candidate.packageName === packageName)
+      if (app) {
+        await launchApp(app)
+      }
+      return
+    }
+
+    if (item.id.startsWith('device:')) {
+      const device = devices.find((candidate) => candidate.id === item.id.slice('device:'.length))
+      if (device) {
+        await connectSavedDevice(device)
+      }
+      return
+    }
+
+    if (item.id === 'apps:fetch') {
+      setTab('apps')
+      await loadApps(true)
+      return
+    }
+
+    if (item.id === 'system:wake') {
+      await wakeAndReconnect()
+      return
+    }
+
+    if (item.id === 'system:scrcpy') {
+      await launchScrcpy()
+      return
+    }
+
+    if (item.id === 'system:sideload') {
+      await chooseApkFile()
     }
   }
 
@@ -1268,6 +1588,63 @@ export function App() {
     )
   }
 
+  function renderCommandPalette() {
+    if (!paletteOpen) {
+      return null
+    }
+
+    return (
+      <div className="palette-backdrop" role="presentation" onMouseDown={() => setPaletteOpen(false)}>
+        <section
+          className="command-palette"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Command palette"
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <div className="palette-top">
+            <span className="focus-label">Command palette</span>
+            <button className="ghost-button" type="button" onClick={() => setPaletteOpen(false)}>
+              Close
+            </button>
+          </div>
+          <input
+            autoFocus
+            value={paletteQuery}
+            onChange={(event) => setPaletteQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                setPaletteOpen(false)
+              }
+            }}
+            placeholder="Search commands, apps, TVs, and power tools..."
+          />
+          <div className="palette-list">
+            {visiblePaletteItems.length === 0 ? (
+              <div className="empty-inline">
+                <strong>No commands match that search.</strong>
+                <span>Try “apps”, “wake”, “scrcpy”, or a saved TV name.</span>
+              </div>
+            ) : (
+              visiblePaletteItems.map((item) => (
+                <button
+                  key={item.id}
+                  className={`palette-item ${item.disabled ? 'disabled' : ''}`}
+                  type="button"
+                  onClick={() => void runPaletteItem(item)}
+                >
+                  <span className="focus-label">{item.section}</span>
+                  <strong>{item.label}</strong>
+                  <small>{item.disabled ? item.disabledReason ?? item.detail : item.detail}</small>
+                </button>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+    )
+  }
+
   function renderAppSection(title: string, sectionApps: LaunchableApp[]) {
     if (sectionApps.length === 0) {
       return null
@@ -1286,6 +1663,8 @@ export function App() {
           {sectionApps.map((app) => {
             const isFavorite = activeDevice?.favorites?.includes(app.packageName) ?? false
             const isLaunching = pendingAppPackage === app.packageName
+            const assignedHotkey =
+              favoriteHotkeys.find((hotkey) => activePreferences?.appHotkeys?.[hotkey] === app.packageName) ?? ''
 
             return (
               <article key={app.packageName} className={`app-row ${isLaunching ? 'busy' : ''}`}>
@@ -1316,6 +1695,21 @@ export function App() {
                   >
                     {isFavorite ? 'Pinned' : 'Pin'}
                   </button>
+                  <select
+                    value={assignedHotkey}
+                    onChange={(event) =>
+                      void assignFavoriteHotkey(app.packageName, event.target.value as FavoriteAppHotkey | '')
+                    }
+                    disabled={!canAssignFavoriteHotkey(activeDevice, app.packageName)}
+                    title={isFavorite ? 'Assign number hotkey' : 'Pin this app before assigning a hotkey'}
+                  >
+                    <option value="">Hotkey</option>
+                    {favoriteHotkeys.map((hotkey) => (
+                      <option key={hotkey} value={hotkey}>
+                        {hotkey}
+                      </option>
+                    ))}
+                  </select>
                   <button
                     className="primary-button"
                     type="button"
@@ -1786,6 +2180,14 @@ export function App() {
           </div>
 
           <div className="remote-stage">
+            {pinnedRemoteButtons.length > 0 ? (
+              <div className="my-controls">
+                <div className="subsection-heading">
+                  <span className="focus-label">My controls</span>
+                </div>
+                <div className="command-grid compact-grid">{pinnedRemoteButtons.map(renderRemoteActionButton)}</div>
+              </div>
+            ) : null}
             <div className="dpad-shell">
               <div className="dpad">
                 <button type="button" className="dpad-btn up" onClick={() => void sendRemoteCommand('up')}>
@@ -1816,27 +2218,141 @@ export function App() {
                 <div className="subsection-heading">
                   <span className="focus-label">Core</span>
                 </div>
-                <div className="command-grid">{coreRemoteButtons.map(renderRemoteActionButton)}</div>
+                <div className="command-grid">{visibleCoreRemoteButtons.map(renderRemoteActionButton)}</div>
               </div>
 
               <div className="command-group">
                 <div className="subsection-heading">
                   <span className="focus-label">Playback</span>
                 </div>
-                <div className="command-grid compact-grid">{mediaRemoteButtons.map(renderRemoteActionButton)}</div>
+                <div className="command-grid compact-grid">{visibleMediaRemoteButtons.map(renderRemoteActionButton)}</div>
               </div>
 
               <div className="command-group">
                 <div className="subsection-heading">
                   <span className="focus-label">Sound</span>
                 </div>
-                <div className="command-grid compact-grid">{soundRemoteButtons.map(renderRemoteActionButton)}</div>
+                <div className="command-grid compact-grid">{visibleSoundRemoteButtons.map(renderRemoteActionButton)}</div>
               </div>
             </div>
           </div>
         </section>
 
         <section className="sheet support-sheet">
+          <div className="support-section">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Power tools</p>
+                <h3>ADB extensions</h3>
+                <p className="muted">
+                  {activeBackend === 'native'
+                    ? 'These use ADB fallback even while native remote is active.'
+                    : 'These use the selected TV through ADB.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="tool-grid">
+              <div className="tool-card">
+                <strong>Screen mirror</strong>
+                <span>{scrcpyStatus.available ? scrcpyStatus.version ?? 'scrcpy detected' : scrcpyStatus.installHint}</span>
+                <select
+                  value={activePreferences?.scrcpyPreset ?? 'fast'}
+                  onChange={(event) => void setScrcpyPreset(event.target.value as ScrcpyPreset)}
+                  disabled={!capabilities.typing}
+                >
+                  {Object.entries(scrcpyPresetLabels).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => void launchScrcpy()}
+                  disabled={busy === 'scrcpy' || !capabilities.typing || !scrcpyStatus.available}
+                >
+                  Open scrcpy
+                </button>
+              </div>
+
+              <div className="tool-card">
+                <strong>APK sideload</strong>
+                <span>
+                  {selectedApk
+                    ? `${selectedApk.name} selected`
+                    : capabilities.typing
+                      ? 'Choose an APK, then install it over ADB.'
+                      : 'ADB fallback is required for APK install.'}
+                </span>
+                <div className="button-row compact-row">
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => void chooseApkFile()}
+                    disabled={busy === 'choose-apk' || !capabilities.typing}
+                  >
+                    Choose APK
+                  </button>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => void installSelectedApk()}
+                    disabled={busy === 'install-apk' || !selectedApk || !capabilities.typing}
+                  >
+                    Install
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="studio-divider" />
+
+          <div className="support-section">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Customize</p>
+                <h3>Remote layout</h3>
+                <p className="muted">Pin daily controls or hide optional buttons. The D-pad always stays visible.</p>
+              </div>
+              <button className="ghost-button" type="button" onClick={() => void resetRemoteLayout()}>
+                Reset
+              </button>
+            </div>
+            <div className="customize-list">
+              {allRemoteButtons.map((button) => {
+                const isPinned = activePreferences?.remoteLayout.pinnedCommands.includes(button.command) ?? false
+                const isHidden = activePreferences?.remoteLayout.hiddenCommands.includes(button.command) ?? false
+
+                return (
+                  <div key={button.command} className="customize-row">
+                    <strong>{button.label}</strong>
+                    <div className="row-actions">
+                      <button
+                        className={`ghost-button ${isPinned ? 'is-selected' : ''}`}
+                        type="button"
+                        onClick={() => void togglePinnedCommand(button.command)}
+                      >
+                        {isPinned ? 'Pinned' : 'Pin'}
+                      </button>
+                      <button
+                        className={`ghost-button ${isHidden ? 'is-selected' : ''}`}
+                        type="button"
+                        onClick={() => void toggleHiddenCommand(button.command)}
+                      >
+                        {isHidden ? 'Hidden' : 'Hide'}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="studio-divider" />
+
           <div className="support-section">
             <div className="section-heading">
               <div>
@@ -2035,6 +2551,8 @@ export function App() {
         ))}
       </div>
 
+      {renderCommandPalette()}
+
       <div className="shell-layout">
         <aside className={`side-rail rail-${connectionTone}`}>
           <div className="rail-brand">
@@ -2069,15 +2587,28 @@ export function App() {
           </div>
 
           <div className="rail-actions">
+            <button className="primary-button" type="button" onClick={() => setPaletteOpen(true)}>
+              Command palette
+            </button>
             {isConnected ? (
-              <button
-                className="ghost-button danger-button"
-                type="button"
-                onClick={() => void disconnect()}
-                disabled={busy === 'disconnect'}
-              >
-                Disconnect
-              </button>
+              <>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() => void wakeAndReconnect()}
+                  disabled={busy === 'wake' || !capabilities.typing}
+                >
+                  Wake / reconnect
+                </button>
+                <button
+                  className="ghost-button danger-button"
+                  type="button"
+                  onClick={() => void disconnect()}
+                  disabled={busy === 'disconnect'}
+                >
+                  Disconnect
+                </button>
+              </>
             ) : (
               <>
                 {tab !== 'setup' ? (

@@ -23,6 +23,12 @@ const api: TvRemoteApi = {
   runAdbTroubleshooting: () => ipcRenderer.invoke(IPC_CHANNELS.diagnosticsRunAdbTroubleshooting),
   getForegroundApp: () => ipcRenderer.invoke(IPC_CHANNELS.appsGetForegroundApp),
   runQuickAction: (id) => ipcRenderer.invoke(IPC_CHANNELS.actionsRunQuickAction, id),
+  updateDevicePreferences: (input) => ipcRenderer.invoke(IPC_CHANNELS.devicesUpdatePreferences, input),
+  wakeAndReconnect: () => ipcRenderer.invoke(IPC_CHANNELS.adbWakeAndReconnect),
+  getScrcpyStatus: () => ipcRenderer.invoke(IPC_CHANNELS.scrcpyGetStatus),
+  launchScrcpy: (input) => ipcRenderer.invoke(IPC_CHANNELS.scrcpyLaunch, input),
+  chooseApkFile: () => ipcRenderer.invoke(IPC_CHANNELS.sideloadChooseApk),
+  installApk: (input) => ipcRenderer.invoke(IPC_CHANNELS.sideloadInstallApk, input),
   onConnectionStateChanged: (listener) => {
     const wrapped = (_event: Electron.IpcRendererEvent, state: ConnectionState) => listener(state)
     ipcRenderer.on(IPC_CHANNELS.connectionStateChanged, wrapped)
