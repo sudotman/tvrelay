@@ -12958,6 +12958,8 @@ function App() {
   const activeMatchesForm = Boolean(activeDevice && form.host.trim() && activeDevice.host === form.host.trim());
   const savedSelectedDevice = devices.find((device) => device.host === form.host.trim()) ?? null;
   const setupDevice = savedSelectedDevice ?? (activeMatchesForm ? activeDevice : null);
+  const currentTargetDevice = setupDevice ?? (!hasSelectedTv ? activeDevice : null);
+  const hasCurrentTarget = Boolean(hasSelectedTv || currentTargetDevice);
   const setupDeviceId = setupDevice?.id;
   const nativePaired = Boolean(setupDevice?.nativeRemote?.certificate);
   const nativeSetupState = getNativeSetupState({
@@ -13009,6 +13011,13 @@ function App() {
           eyebrow: "Setup in focus",
           title: `Configure ${setupTargetName}`,
           detail: "Ports, pairing, and backend preference live here."
+        };
+      }
+      if (activeDevice) {
+        return {
+          eyebrow: "Setup in focus",
+          title: `Connected to ${activeDevice.name}`,
+          detail: "Review the active TV, adjust setup, or switch targets below."
         };
       }
       return {
@@ -13142,6 +13151,17 @@ function App() {
     }, 450);
     return () => window.clearTimeout(timer);
   }, [form.adbEnabled, form.host, tab]);
+  reactExports.useEffect(() => {
+    if (connectionState.status !== "connected" || !activeDevice) {
+      return;
+    }
+    setForm((current) => {
+      if (current.host.trim() === activeDevice.host) {
+        return current;
+      }
+      return applyDeviceToForm(activeDevice);
+    });
+  }, [activeDevice?.id, connectionState.status]);
   reactExports.useEffect(() => {
     if (tab !== "apps" || connectionState.status !== "connected" || !capabilities.apps) {
       return;
@@ -14007,7 +14027,7 @@ function App() {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "app-group", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "group-heading", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: title }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "Library section" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: title })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "section-count", children: sectionApps.length })
@@ -14029,7 +14049,7 @@ function App() {
             ),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-row-copy", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: app.displayName }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: app.category === "leanback" ? "TV launcher" : "Standard launcher" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: app.category === "leanback" ? "TV app" : "Launcher app" }),
               deferredAppsQuery.trim() ? /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: app.packageName }) : null
             ] })
           ] }),
@@ -14191,8 +14211,8 @@ function App() {
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "target-line", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "focus-label", children: "Current target" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: hasSelectedTv ? setupTargetName : "No TV selected yet" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: hasSelectedTv ? selectedHostLabel : "Pick a TV above or type the host manually." })
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: currentTargetDevice?.name ?? (hasSelectedTv ? setupTargetName : "No TV selected yet") }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: currentTargetDevice ? `${currentTargetDevice.host}${isConnected && activeDevice?.id === currentTargetDevice.id ? " · connected" : ""}` : hasSelectedTv ? selectedHostLabel : "Pick a TV above or type the host manually." })
             ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsx(
               "button",
@@ -14200,7 +14220,7 @@ function App() {
                 className: "ghost-button",
                 type: "button",
                 onClick: () => void saveSetup(),
-                disabled: busy === "save" || !hasSelectedTv,
+                disabled: busy === "save" || !hasCurrentTarget,
                 children: "Save TV profile"
               }
             )
@@ -14746,8 +14766,6 @@ function App() {
     ] }) });
   }
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-shell", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "ambient ambient-one", "aria-hidden": "true" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "ambient ambient-two", "aria-hidden": "true" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "toast-stack", "aria-live": "polite", children: actionToasts.map((toast) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `toast-card tone-${feedbackTone(toast.status)}`, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: toast.title }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: toast.detail })

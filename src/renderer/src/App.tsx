@@ -383,6 +383,8 @@ export function App() {
   const activeMatchesForm = Boolean(activeDevice && form.host.trim() && activeDevice.host === form.host.trim())
   const savedSelectedDevice = devices.find((device) => device.host === form.host.trim()) ?? null
   const setupDevice = savedSelectedDevice ?? (activeMatchesForm ? activeDevice : null)
+  const currentTargetDevice = setupDevice ?? (!hasSelectedTv ? activeDevice : null)
+  const hasCurrentTarget = Boolean(hasSelectedTv || currentTargetDevice)
   const setupDeviceId = setupDevice?.id
   const nativePaired = Boolean(setupDevice?.nativeRemote?.certificate)
   const nativeSetupState = getNativeSetupState({
@@ -440,6 +442,14 @@ export function App() {
           eyebrow: 'Setup in focus',
           title: `Configure ${setupTargetName}`,
           detail: 'Ports, pairing, and backend preference live here.'
+        }
+      }
+
+      if (activeDevice) {
+        return {
+          eyebrow: 'Setup in focus',
+          title: `Connected to ${activeDevice.name}`,
+          detail: 'Review the active TV, adjust setup, or switch targets below.'
         }
       }
 
@@ -630,6 +640,20 @@ export function App() {
 
     return () => window.clearTimeout(timer)
   }, [form.adbEnabled, form.host, tab])
+
+  useEffect(() => {
+    if (connectionState.status !== 'connected' || !activeDevice) {
+      return
+    }
+
+    setForm((current) => {
+      if (current.host.trim() === activeDevice.host) {
+        return current
+      }
+
+      return applyDeviceToForm(activeDevice)
+    })
+  }, [activeDevice?.id, connectionState.status])
 
   useEffect(() => {
     if (tab !== 'apps' || connectionState.status !== 'connected' || !capabilities.apps) {
@@ -1654,7 +1678,7 @@ export function App() {
       <section className="app-group" key={title}>
         <div className="group-heading">
           <div>
-            <span className="focus-label">{title}</span>
+            <span className="focus-label">Library section</span>
             <h3>{title}</h3>
           </div>
           <span className="section-count">{sectionApps.length}</span>
@@ -1682,7 +1706,7 @@ export function App() {
                   )}
                   <div className="app-row-copy">
                     <strong>{app.displayName}</strong>
-                    <span>{app.category === 'leanback' ? 'TV launcher' : 'Standard launcher'}</span>
+                    <span>{app.category === 'leanback' ? 'TV app' : 'Launcher app'}</span>
                     {deferredAppsQuery.trim() ? <small>{app.packageName}</small> : null}
                   </div>
                 </div>
@@ -1854,14 +1878,20 @@ export function App() {
             <div className="target-line">
               <div>
                 <span className="focus-label">Current target</span>
-                <strong>{hasSelectedTv ? setupTargetName : 'No TV selected yet'}</strong>
-                <small>{hasSelectedTv ? selectedHostLabel : 'Pick a TV above or type the host manually.'}</small>
+                <strong>{currentTargetDevice?.name ?? (hasSelectedTv ? setupTargetName : 'No TV selected yet')}</strong>
+                <small>
+                  {currentTargetDevice
+                    ? `${currentTargetDevice.host}${isConnected && activeDevice?.id === currentTargetDevice.id ? ' · connected' : ''}`
+                    : hasSelectedTv
+                      ? selectedHostLabel
+                      : 'Pick a TV above or type the host manually.'}
+                </small>
               </div>
               <button
                 className="ghost-button"
                 type="button"
                 onClick={() => void saveSetup()}
-                disabled={busy === 'save' || !hasSelectedTv}
+                disabled={busy === 'save' || !hasCurrentTarget}
               >
                 Save TV profile
               </button>
@@ -2539,9 +2569,6 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <div className="ambient ambient-one" aria-hidden="true" />
-      <div className="ambient ambient-two" aria-hidden="true" />
-
       <div className="toast-stack" aria-live="polite">
         {actionToasts.map((toast) => (
           <div key={toast.id} className={`toast-card tone-${feedbackTone(toast.status)}`}>
