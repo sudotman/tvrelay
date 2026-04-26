@@ -12893,6 +12893,13 @@ function EmptyWorkspace(props) {
 }
 function App() {
   const [tab, setTab] = reactExports.useState("setup");
+  const [themeMode, setThemeMode] = reactExports.useState(() => {
+    const savedTheme = window.localStorage.getItem("relay-theme");
+    if (savedTheme === "light" || savedTheme === "dark") {
+      return savedTheme;
+    }
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
   const [diagnostics, setDiagnostics] = reactExports.useState(null);
   const [devices, setDevices] = reactExports.useState([]);
   const [connectionState, setConnectionState] = reactExports.useState({ status: "disconnected" });
@@ -13121,6 +13128,10 @@ function App() {
       setForegroundAppState(null);
     }
   }
+  reactExports.useEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+    window.localStorage.setItem("relay-theme", themeMode);
+  }, [themeMode]);
   reactExports.useEffect(() => {
     void refreshDiagnostics();
     void scanNativeDevices();
@@ -14554,7 +14565,7 @@ function App() {
         ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "sheet support-sheet", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "support-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "support-section support-tools", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "section-heading", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Power tools" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "ADB extensions" }),
@@ -14613,7 +14624,7 @@ function App() {
           ] })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "studio-divider" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "support-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "support-section support-customize", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "section-heading", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Customize" }),
@@ -14651,7 +14662,7 @@ function App() {
           }) })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "studio-divider" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "support-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "support-section support-shortcuts", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "section-heading", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Keyboard mode" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Shortcut map" })
@@ -14662,7 +14673,7 @@ function App() {
           ] }, shortcut.keys)) })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "studio-divider" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "support-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "support-section support-typing", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "section-heading", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "eyebrow", children: "Type remotely" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Text input" }),
@@ -14765,7 +14776,7 @@ function App() {
       ] })
     ] }) });
   }
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-shell", children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-shell", "data-theme": themeMode, children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "toast-stack", "aria-live": "polite", children: actionToasts.map((toast) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `toast-card tone-${feedbackTone(toast.status)}`, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: toast.title }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: toast.detail })
@@ -14802,6 +14813,19 @@ function App() {
           /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: liveStatusTitle })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rail-actions", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              className: "ghost-button theme-toggle",
+              type: "button",
+              onClick: () => setThemeMode((current) => current === "light" ? "dark" : "light"),
+              "aria-pressed": themeMode === "dark",
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Theme" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: themeMode === "light" ? "Light" : "Dark" })
+              ]
+            }
+          ),
           /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "primary-button", type: "button", onClick: () => setPaletteOpen(true), children: "Command palette" }),
           isConnected ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(

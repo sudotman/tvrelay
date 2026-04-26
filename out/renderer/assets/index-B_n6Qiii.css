@@ -1692,6 +1692,382 @@ textarea {
   }
 }
 
+/* Remote layout + light/dark aesthetic themes. */
+html[data-theme="light"] {
+  color-scheme: light;
+  --app-bg: #f2f5ef;
+  --app-bg-soft: #e8efe7;
+  --panel: #fbfcf8;
+  --panel-elevated: #ffffff;
+  --panel-muted: #eef5ef;
+  --text: #171b18;
+  --muted: #657066;
+  --line: rgba(31, 45, 35, 0.13);
+  --line-strong: rgba(31, 45, 35, 0.22);
+  --accent: #3f7f68;
+  --accent-deep: #225c4b;
+  --accent-soft: #e3f1ea;
+  --accent-warm: #ad7651;
+  --danger: #b94a42;
+  --remote-bg: #17211b;
+  --remote-bg-2: #202b23;
+  --remote-panel: rgba(255, 255, 255, 0.07);
+  --remote-line: rgba(255, 255, 255, 0.11);
+  --shadow: 0 18px 50px rgba(31, 45, 35, 0.1);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --app-bg: #101611;
+  --app-bg-soft: #15231b;
+  --panel: #172019;
+  --panel-elevated: #1c271f;
+  --panel-muted: #202d24;
+  --text: #f4f2ea;
+  --muted: #a7b2a7;
+  --line: rgba(219, 232, 217, 0.11);
+  --line-strong: rgba(219, 232, 217, 0.2);
+  --accent: #7fc5a5;
+  --accent-deep: #98d9bb;
+  --accent-soft: rgba(127, 197, 165, 0.14);
+  --accent-warm: #d5a06f;
+  --danger: #ef8d82;
+  --remote-bg: #0b100d;
+  --remote-bg-2: #162019;
+  --remote-panel: rgba(255, 255, 255, 0.075);
+  --remote-line: rgba(255, 255, 255, 0.12);
+  --shadow: 0 22px 70px rgba(0, 0, 0, 0.28);
+}
+
+body {
+  background:
+    linear-gradient(180deg, var(--app-bg) 0%, var(--app-bg-soft) 100%);
+  color: var(--text);
+}
+
+.app-shell {
+  color: var(--text);
+}
+
+.shell-layout {
+  grid-template-columns: 224px minmax(0, 1fr);
+}
+
+.side-rail,
+.hero-ribbon,
+.sheet,
+.empty-workspace,
+.command-palette,
+.toast-card {
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  border-color: var(--line);
+  box-shadow: var(--shadow);
+}
+
+.side-rail {
+  overflow: hidden;
+}
+
+.side-rail::before,
+.hero-ribbon::before,
+.sheet::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), transparent 46%, var(--accent-warm));
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.side-rail,
+.hero-ribbon,
+.sheet {
+  position: relative;
+}
+
+.rail-brand,
+.studio-divider {
+  border-color: var(--line);
+}
+
+.rail-brand h1,
+.rail-tab,
+.rail-session strong,
+.hero-copy h2,
+.section-heading h3,
+.group-heading h3,
+.row-copy strong,
+.app-row-copy strong,
+.shortcut-row strong,
+.tool-card strong,
+.customize-row strong,
+.notice-copy strong,
+.empty-inline strong,
+label {
+  color: var(--text);
+}
+
+.rail-copy,
+.rail-session p,
+.rail-session small,
+.rail-tab span,
+.hero-detail,
+.muted,
+.compact-copy,
+.notice-copy span,
+.row-copy span,
+.row-copy small,
+.app-row-copy span,
+.app-row-copy small,
+.tool-card span,
+.shortcut-action {
+  color: var(--muted);
+}
+
+.eyebrow,
+.focus-label {
+  color: var(--accent-deep);
+}
+
+.rail-tab.active,
+.rail-session,
+.signal-tile,
+.notice-band,
+.status-strip-inline,
+.target-line,
+.empty-inline,
+.apps-summary,
+.apps-controls {
+  background: var(--panel-muted);
+  border-color: var(--line);
+}
+
+.rail-tab.active {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.theme-toggle {
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.primary-button {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 88%, white), var(--accent));
+  border-color: color-mix(in srgb, var(--accent) 70%, black);
+  color: #ffffff;
+}
+
+.ghost-button,
+input,
+select,
+textarea,
+.health-pair,
+.issue-row,
+.tool-card,
+.customize-row,
+.app-row,
+.shortcut-key {
+  background: var(--panel-elevated);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.danger-button {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 9%, var(--panel-elevated));
+  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: color-mix(in srgb, var(--muted) 76%, transparent);
+}
+
+.section-chip,
+.section-count,
+.status-pill {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent-deep);
+}
+
+.tone-neutral {
+  background: color-mix(in srgb, var(--panel-muted) 82%, var(--panel));
+  color: var(--muted);
+}
+
+.tone-positive {
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+}
+
+.tone-warning {
+  background: color-mix(in srgb, var(--accent-warm) 18%, var(--panel));
+  color: var(--accent-warm);
+}
+
+.tone-danger {
+  background: color-mix(in srgb, var(--danger) 14%, var(--panel));
+  color: var(--danger);
+}
+
+.hero-ribbon {
+  grid-template-columns: minmax(240px, 0.8fr) minmax(520px, 1.2fr);
+}
+
+.signal-tile {
+  min-height: 86px;
+}
+
+.remote-workspace {
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+.remote-sheet {
+  background:
+    linear-gradient(145deg, var(--remote-bg) 0%, var(--remote-bg-2) 100%);
+  border-color: var(--remote-line);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.22);
+}
+
+.remote-sheet::before {
+  background: linear-gradient(90deg, var(--accent), transparent 55%, var(--accent-warm));
+  opacity: 0.7;
+}
+
+.remote-stage {
+  grid-template-columns: minmax(300px, 0.72fr) minmax(480px, 1.28fr);
+  gap: 1rem;
+}
+
+.dpad-shell,
+.command-button,
+.my-controls {
+  background: var(--remote-panel);
+  border-color: var(--remote-line);
+}
+
+.dpad-shell {
+  min-height: 100%;
+}
+
+.dpad-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--remote-line);
+}
+
+.dpad-btn.select,
+.command-button.accent {
+  background: color-mix(in srgb, var(--accent-warm) 34%, transparent);
+  border-color: color-mix(in srgb, var(--accent-warm) 45%, transparent);
+}
+
+.support-sheet {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.support-sheet > .studio-divider {
+  display: none;
+}
+
+.support-sheet > .support-section:nth-of-type(1) {
+  grid-column: span 5;
+}
+
+.support-sheet > .support-section:nth-of-type(2) {
+  grid-column: span 7;
+}
+
+.support-sheet > .support-section:nth-of-type(3) {
+  grid-column: span 5;
+}
+
+.support-sheet > .support-section:nth-of-type(4) {
+  grid-column: span 7;
+}
+
+.tool-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tool-card {
+  min-height: 100%;
+}
+
+.customize-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-height: 280px;
+  padding-right: 0.15rem;
+}
+
+.customize-row {
+  min-height: 4.1rem;
+}
+
+.shortcut-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.shortcut-row {
+  padding: 0.62rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-elevated);
+}
+
+.support-section textarea {
+  min-height: 118px;
+}
+
+.app-row:hover,
+.palette-item:hover:not(.disabled) {
+  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
+  background: color-mix(in srgb, var(--accent-soft) 34%, var(--panel-elevated));
+}
+
+html[data-theme="dark"] .remote-sheet {
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.42);
+}
+
+html[data-theme="dark"] .primary-button {
+  color: #07120d;
+}
+
+html[data-theme="dark"] .danger-button {
+  color: var(--danger);
+}
+
+@media (max-width: 1320px) {
+  .support-sheet > .support-section:nth-of-type(1),
+  .support-sheet > .support-section:nth-of-type(2),
+  .support-sheet > .support-section:nth-of-type(3),
+  .support-sheet > .support-section:nth-of-type(4) {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 1100px) {
+  .remote-stage,
+  .hero-ribbon {
+    grid-template-columns: 1fr;
+  }
+
+  .tool-grid,
+  .customize-list,
+  .shortcut-list {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 720px) {
   .rail-brand h1,
   .hero-copy h2,
@@ -2654,5 +3030,435 @@ textarea::placeholder {
   .sheet,
   .empty-workspace {
     border-radius: 14px;
+  }
+}
+
+/* Final art direction layer: authoritative theme + Remote composition. */
+html[data-theme="light"],
+.app-shell[data-theme="light"] {
+  color-scheme: light;
+  --page: #f3f5ef;
+  --page-2: #e8eee6;
+  --surface: #fbfcf7;
+  --surface-2: #ffffff;
+  --surface-3: #edf4ee;
+  --ink: #151a16;
+  --ink-soft: #5f6a62;
+  --hairline: rgba(30, 46, 35, 0.13);
+  --hairline-strong: rgba(30, 46, 35, 0.23);
+  --brand: #2f765f;
+  --brand-2: #78b99c;
+  --brand-soft: #e1f0e8;
+  --warm: #b77a4f;
+  --danger: #ba4b43;
+  --remote-0: #111914;
+  --remote-1: #1a251e;
+  --remote-2: #243329;
+  --remote-control: rgba(255, 255, 255, 0.075);
+  --remote-control-hover: rgba(255, 255, 255, 0.12);
+  --remote-border: rgba(255, 255, 255, 0.12);
+  --depth: 0 20px 60px rgba(29, 43, 33, 0.11);
+}
+
+html[data-theme="dark"],
+.app-shell[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d130f;
+  --page-2: #131d16;
+  --surface: #151e18;
+  --surface-2: #1b271f;
+  --surface-3: #202e25;
+  --ink: #f4f1e7;
+  --ink-soft: #aab7aa;
+  --hairline: rgba(226, 237, 221, 0.11);
+  --hairline-strong: rgba(226, 237, 221, 0.22);
+  --brand: #83c9a8;
+  --brand-2: #4e9d7c;
+  --brand-soft: rgba(131, 201, 168, 0.14);
+  --warm: #d6a06f;
+  --danger: #ef887e;
+  --remote-0: #070c09;
+  --remote-1: #0f1812;
+  --remote-2: #19251d;
+  --remote-control: rgba(255, 255, 255, 0.08);
+  --remote-control-hover: rgba(255, 255, 255, 0.14);
+  --remote-border: rgba(255, 255, 255, 0.13);
+  --depth: 0 22px 72px rgba(0, 0, 0, 0.34);
+}
+
+html[data-theme] body {
+  background:
+    linear-gradient(145deg, var(--page) 0%, var(--page-2) 100%);
+  color: var(--ink);
+}
+
+.app-shell[data-theme] {
+  max-width: none;
+  min-height: 100vh;
+  color: var(--ink);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 42%, transparent), transparent 42%),
+    linear-gradient(145deg, var(--page), var(--page-2));
+}
+
+.app-shell[data-theme] .shell-layout {
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: 0.8rem;
+}
+
+.app-shell[data-theme] .side-rail,
+.app-shell[data-theme] .hero-ribbon,
+.app-shell[data-theme] .sheet,
+.app-shell[data-theme] .empty-workspace,
+.app-shell[data-theme] .command-palette,
+.app-shell[data-theme] .toast-card {
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--depth);
+  color: var(--ink);
+}
+
+.app-shell[data-theme] .side-rail,
+.app-shell[data-theme] .hero-ribbon,
+.app-shell[data-theme] .sheet {
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+.app-shell[data-theme] .side-rail::before,
+.app-shell[data-theme] .hero-ribbon::before,
+.app-shell[data-theme] .sheet::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: linear-gradient(90deg, var(--brand), transparent 50%, var(--warm));
+  opacity: 0.58;
+  pointer-events: none;
+}
+
+.app-shell[data-theme] .rail-brand h1,
+.app-shell[data-theme] .hero-copy h2,
+.app-shell[data-theme] .section-heading h3,
+.app-shell[data-theme] .group-heading h3,
+.app-shell[data-theme] .row-copy strong,
+.app-shell[data-theme] .app-row-copy strong,
+.app-shell[data-theme] .shortcut-row strong,
+.app-shell[data-theme] .tool-card strong,
+.app-shell[data-theme] .customize-row strong,
+.app-shell[data-theme] .notice-copy strong,
+.app-shell[data-theme] label {
+  color: var(--ink);
+}
+
+.app-shell[data-theme] .rail-copy,
+.app-shell[data-theme] .rail-session p,
+.app-shell[data-theme] .rail-session small,
+.app-shell[data-theme] .rail-tab span,
+.app-shell[data-theme] .hero-detail,
+.app-shell[data-theme] .muted,
+.app-shell[data-theme] .compact-copy,
+.app-shell[data-theme] .notice-copy span,
+.app-shell[data-theme] .row-copy span,
+.app-shell[data-theme] .row-copy small,
+.app-shell[data-theme] .app-row-copy span,
+.app-shell[data-theme] .app-row-copy small,
+.app-shell[data-theme] .tool-card span,
+.app-shell[data-theme] .shortcut-action,
+.app-shell[data-theme] .status-card small,
+.app-shell[data-theme] .health-pair small {
+  color: var(--ink-soft);
+}
+
+.app-shell[data-theme] .eyebrow,
+.app-shell[data-theme] .focus-label {
+  color: var(--brand);
+}
+
+.app-shell[data-theme] .rail-brand,
+.app-shell[data-theme] .studio-divider {
+  border-color: var(--hairline);
+}
+
+.app-shell[data-theme] .rail-tab {
+  color: var(--ink);
+  background: transparent;
+  border-color: transparent;
+}
+
+.app-shell[data-theme] .rail-tab.active,
+.app-shell[data-theme] .rail-session,
+.app-shell[data-theme] .signal-tile,
+.app-shell[data-theme] .notice-band,
+.app-shell[data-theme] .status-strip-inline,
+.app-shell[data-theme] .target-line,
+.app-shell[data-theme] .empty-inline,
+.app-shell[data-theme] .apps-summary,
+.app-shell[data-theme] .apps-controls {
+  background: var(--surface-3);
+  border-color: var(--hairline);
+}
+
+.app-shell[data-theme] .rail-tab.active {
+  box-shadow: inset 3px 0 0 var(--brand);
+}
+
+.app-shell[data-theme] .theme-toggle {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.7rem;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-color: color-mix(in srgb, var(--brand) 28%, transparent);
+}
+
+.app-shell[data-theme] .theme-toggle span {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+.app-shell[data-theme] .theme-toggle strong {
+  color: var(--brand);
+  font-size: 0.84rem;
+}
+
+.app-shell[data-theme] .primary-button {
+  color: #06120d;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--brand) 72%, #ffffff), var(--brand));
+  border-color: color-mix(in srgb, var(--brand) 70%, #000000);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--brand) 22%, transparent);
+}
+
+.app-shell[data-theme="light"] .primary-button {
+  color: #ffffff;
+}
+
+.app-shell[data-theme] .ghost-button,
+.app-shell[data-theme] input,
+.app-shell[data-theme] select,
+.app-shell[data-theme] textarea,
+.app-shell[data-theme] .health-pair,
+.app-shell[data-theme] .issue-row,
+.app-shell[data-theme] .tool-card,
+.app-shell[data-theme] .customize-row,
+.app-shell[data-theme] .app-row,
+.app-shell[data-theme] .shortcut-key,
+.app-shell[data-theme] .palette-item {
+  color: var(--ink);
+  background: var(--surface-2);
+  border-color: var(--hairline);
+}
+
+.app-shell[data-theme] input:focus,
+.app-shell[data-theme] select:focus,
+.app-shell[data-theme] textarea:focus {
+  border-color: color-mix(in srgb, var(--brand) 58%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 16%, transparent);
+}
+
+.app-shell[data-theme] .danger-button {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 9%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+}
+
+.app-shell[data-theme] .section-chip,
+.app-shell[data-theme] .section-count,
+.app-shell[data-theme] .status-pill {
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-color: color-mix(in srgb, var(--brand) 24%, transparent);
+}
+
+.app-shell[data-theme] .tone-neutral {
+  color: var(--ink-soft);
+  background: var(--surface-3);
+}
+
+.app-shell[data-theme] .tone-positive {
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.app-shell[data-theme] .tone-warning {
+  color: var(--warm);
+  background: color-mix(in srgb, var(--warm) 16%, var(--surface));
+}
+
+.app-shell[data-theme] .tone-danger {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface));
+}
+
+.app-shell[data-theme] .hero-ribbon {
+  grid-template-columns: minmax(260px, 0.72fr) minmax(520px, 1.28fr);
+  min-height: 120px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--surface) 88%, var(--brand-soft)), var(--surface));
+}
+
+.app-shell[data-theme="dark"] .hero-ribbon {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--surface) 82%, #000000), color-mix(in srgb, var(--surface-2) 78%, var(--brand-soft)));
+}
+
+.app-shell[data-theme] .signal-strip {
+  grid-template-columns: repeat(4, minmax(132px, 1fr));
+}
+
+.app-shell[data-theme] .signal-tile {
+  min-height: 82px;
+  box-shadow: none;
+}
+
+.app-shell[data-theme] .remote-workspace {
+  grid-template-columns: 1fr;
+}
+
+.app-shell[data-theme] .remote-sheet {
+  color: #f6f3ea;
+  background:
+    linear-gradient(145deg, var(--remote-0) 0%, var(--remote-1) 52%, var(--remote-2) 100%);
+  border-color: var(--remote-border);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
+}
+
+.app-shell[data-theme] .remote-sheet .section-heading h3,
+.app-shell[data-theme] .remote-sheet .row-copy strong,
+.app-shell[data-theme] .remote-sheet .subsection-heading strong {
+  color: #fffaf0;
+}
+
+.app-shell[data-theme] .remote-sheet .eyebrow,
+.app-shell[data-theme] .remote-sheet .focus-label {
+  color: color-mix(in srgb, var(--brand) 86%, #ffffff);
+}
+
+.app-shell[data-theme] .remote-sheet .muted,
+.app-shell[data-theme] .remote-sheet .command-button small,
+.app-shell[data-theme] .remote-sheet .section-heading p,
+.app-shell[data-theme] .remote-sheet .subsection-heading {
+  color: rgba(246, 243, 234, 0.66);
+}
+
+.app-shell[data-theme] .remote-stage {
+  grid-template-columns: minmax(320px, 0.68fr) minmax(520px, 1.32fr);
+  gap: 1rem;
+}
+
+.app-shell[data-theme] .dpad-shell,
+.app-shell[data-theme] .command-button,
+.app-shell[data-theme] .my-controls {
+  color: #fffaf0;
+  background: var(--remote-control);
+  border-color: var(--remote-border);
+}
+
+.app-shell[data-theme] .dpad-btn {
+  color: #fffaf0;
+  background: var(--remote-control);
+  border-color: var(--remote-border);
+  transition:
+    transform 140ms ease,
+    background 140ms ease,
+    border-color 140ms ease;
+}
+
+.app-shell[data-theme] .dpad-btn:hover,
+.app-shell[data-theme] .command-button:hover {
+  transform: translateY(-1px);
+  background: var(--remote-control-hover);
+  border-color: color-mix(in srgb, var(--brand) 42%, var(--remote-border));
+}
+
+.app-shell[data-theme] .dpad-btn:active,
+.app-shell[data-theme] .command-button:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+.app-shell[data-theme] .dpad-btn.select,
+.app-shell[data-theme] .command-button.accent {
+  background: color-mix(in srgb, var(--warm) 30%, var(--remote-control));
+  border-color: color-mix(in srgb, var(--warm) 46%, var(--remote-border));
+}
+
+.app-shell[data-theme] .support-sheet {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.app-shell[data-theme] .support-sheet > .studio-divider {
+  display: none;
+}
+
+.app-shell[data-theme] .support-tools {
+  grid-column: span 5;
+}
+
+.app-shell[data-theme] .support-customize {
+  grid-column: span 7;
+}
+
+.app-shell[data-theme] .support-shortcuts {
+  grid-column: span 5;
+}
+
+.app-shell[data-theme] .support-typing {
+  grid-column: span 7;
+}
+
+.app-shell[data-theme] .tool-grid,
+.app-shell[data-theme] .customize-list,
+.app-shell[data-theme] .shortcut-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.app-shell[data-theme] .customize-list {
+  max-height: 280px;
+}
+
+.app-shell[data-theme] .shortcut-row {
+  padding: 0.62rem;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.app-shell[data-theme] .support-typing textarea {
+  min-height: 120px;
+}
+
+.app-shell[data-theme] .app-row:hover,
+.app-shell[data-theme] .palette-item:hover:not(.disabled),
+.app-shell[data-theme] .ghost-button:hover {
+  border-color: color-mix(in srgb, var(--brand) 36%, transparent);
+  background: color-mix(in srgb, var(--brand-soft) 36%, var(--surface-2));
+}
+
+@media (max-width: 1320px) {
+  .app-shell[data-theme] .support-tools,
+  .app-shell[data-theme] .support-customize,
+  .app-shell[data-theme] .support-shortcuts,
+  .app-shell[data-theme] .support-typing {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 1100px) {
+  .app-shell[data-theme] .hero-ribbon,
+  .app-shell[data-theme] .remote-stage {
+    grid-template-columns: 1fr;
+  }
+
+  .app-shell[data-theme] .tool-grid,
+  .app-shell[data-theme] .customize-list,
+  .app-shell[data-theme] .shortcut-list {
+    grid-template-columns: 1fr;
   }
 }

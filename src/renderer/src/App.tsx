@@ -30,6 +30,7 @@ import {
 } from './viewModel'
 
 type TabId = 'setup' | 'remote' | 'apps'
+type ThemeMode = 'light' | 'dark'
 
 type SetupFormState = {
   name: string
@@ -313,6 +314,14 @@ function EmptyWorkspace(props: {
 
 export function App() {
   const [tab, setTab] = useState<TabId>('setup')
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    const savedTheme = window.localStorage.getItem('relay-theme')
+    if (savedTheme === 'light' || savedTheme === 'dark') {
+      return savedTheme
+    }
+
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  })
   const [diagnostics, setDiagnostics] = useState<DiagnosticsStatus | null>(null)
   const [devices, setDevices] = useState<SavedDevice[]>([])
   const [connectionState, setConnectionState] = useState<ConnectionState>({ status: 'disconnected' })
@@ -602,6 +611,11 @@ export function App() {
       setForegroundAppState(null)
     }
   }
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeMode
+    window.localStorage.setItem('relay-theme', themeMode)
+  }, [themeMode])
 
   useEffect(() => {
     void refreshDiagnostics()
@@ -2269,7 +2283,7 @@ export function App() {
         </section>
 
         <section className="sheet support-sheet">
-          <div className="support-section">
+          <div className="support-section support-tools">
             <div className="section-heading">
               <div>
                 <p className="eyebrow">Power tools</p>
@@ -2340,7 +2354,7 @@ export function App() {
 
           <div className="studio-divider" />
 
-          <div className="support-section">
+          <div className="support-section support-customize">
             <div className="section-heading">
               <div>
                 <p className="eyebrow">Customize</p>
@@ -2383,7 +2397,7 @@ export function App() {
 
           <div className="studio-divider" />
 
-          <div className="support-section">
+          <div className="support-section support-shortcuts">
             <div className="section-heading">
               <div>
                 <p className="eyebrow">Keyboard mode</p>
@@ -2408,7 +2422,7 @@ export function App() {
 
           <div className="studio-divider" />
 
-          <div className="support-section">
+          <div className="support-section support-typing">
             <div className="section-heading">
               <div>
                 <p className="eyebrow">Type remotely</p>
@@ -2568,7 +2582,7 @@ export function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-theme={themeMode}>
       <div className="toast-stack" aria-live="polite">
         {actionToasts.map((toast) => (
           <div key={toast.id} className={`toast-card tone-${feedbackTone(toast.status)}`}>
@@ -2614,6 +2628,15 @@ export function App() {
           </div>
 
           <div className="rail-actions">
+            <button
+              className="ghost-button theme-toggle"
+              type="button"
+              onClick={() => setThemeMode((current) => (current === 'light' ? 'dark' : 'light'))}
+              aria-pressed={themeMode === 'dark'}
+            >
+              <span>Theme</span>
+              <strong>{themeMode === 'light' ? 'Light' : 'Dark'}</strong>
+            </button>
             <button className="primary-button" type="button" onClick={() => setPaletteOpen(true)}>
               Command palette
             </button>
