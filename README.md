@@ -5,6 +5,7 @@ an electron app for controlling any smart tv from macOS or Windows using Electro
 
 the app will work with most android tvs/smart tvs.
 
+[![Demo screenshot of TV Relay desktop application showing the Android TV setup and control interface with dark theme. The left sidebar displays setup options, device roster showing a connected bedroom TV at 192.168.29.40, remote controls for playback and typing, and apps launcher. The main content area shows the configuration panel for connecting with ADB, displaying fields for ADB pair port (37099), connect port (5555), and pair code (654321), along with diagnostics showing both ADB and Native Remote as Ready. The interface has a professional dark blue color scheme with blue accent buttons and status indicators.](https://github.com/sudotman/sudotman/blob/main/demos/tvrelay/ss1.png?raw=true)](https://github.com/sudotman/sudotman/blob/main/demos/tvrelay/ss1.png?raw=true)
 
 ## adb vs native
 adb is the most universally supported path with the caveat of having to enable developer options and occasional input lag if the local network clogs over wireless adb. 
