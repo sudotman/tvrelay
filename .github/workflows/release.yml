@@ -7,7 +7,7 @@ on:
 
 permissions:
   contents: write
-
+  
 jobs:
   build-macos:
     name: Build macOS Artifacts
@@ -98,6 +98,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          overwrite_files: true
           files: |
-            release-artifacts/macos/**
-            release-artifacts/windows/**
+            release-artifacts/macos/*.dmg
+            release-artifacts/macos/*.zip
+            release-artifacts/windows/*.exe
+            release-artifacts/windows/*.zip
+          token: ${{ secrets.GITHUB_TOKEN }}
