@@ -18,8 +18,7 @@
 /.idea/
 /dist/
 node_modules/
-SHASUMS256.txt
-**/package-lock.json
+SHASUMS256.txtopen
 compile_commands.json
 .envrc
 

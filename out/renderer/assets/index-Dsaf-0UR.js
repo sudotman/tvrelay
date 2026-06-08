@@ -12811,6 +12811,9 @@ function feedbackTone(status) {
       return "danger";
   }
 }
+function shouldShowToast(feedback) {
+  return feedback.kind !== "remote" || feedback.status === "blocked" || feedback.status === "error";
+}
 function getBackendHealthLabel(snapshot, unavailableLabel) {
   if (!snapshot) {
     return unavailableLabel;
@@ -13003,6 +13006,7 @@ function App() {
   });
   const visiblePaletteItems = filterPaletteItems(paletteItems, deferredPaletteQuery);
   const latestAction = actionFeed[0] ?? null;
+  const latestRemoteAction = actionFeed.find((item) => item.kind === "remote") ?? null;
   viewTabs.find((item) => item.id === tab) ?? viewTabs[0];
   const viewStatus = (() => {
     if (tab === "setup") {
@@ -13280,8 +13284,11 @@ function App() {
     };
   }
   function publishFeedback(feedback) {
+    const showToast = shouldShowToast(feedback);
     setActionFeed((current) => [feedback, ...current].slice(0, 8));
-    setActionToasts((current) => [feedback, ...current].slice(0, 3));
+    if (showToast) {
+      setActionToasts((current) => [feedback, ...current].slice(0, 3));
+    }
     setStatusMessage(feedback.detail);
     if (feedback.command && feedback.cooldownMs) {
       setCommandCooldowns((current) => ({
@@ -13289,9 +13296,11 @@ function App() {
         [feedback.command]: Date.now() + feedback.cooldownMs
       }));
     }
-    window.setTimeout(() => {
-      setActionToasts((current) => current.filter((item) => item.id !== feedback.id));
-    }, feedback.status === "blocked" ? 3600 : 3e3);
+    if (showToast) {
+      window.setTimeout(() => {
+        setActionToasts((current) => current.filter((item) => item.id !== feedback.id));
+      }, feedback.status === "blocked" ? 3600 : 3e3);
+    }
   }
   function publishErrorFeedback(title, error, kind, extras) {
     const detail = error instanceof Error ? error.message : title;
@@ -14522,7 +14531,20 @@ function App() {
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-pair", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `status-pill tone-${statusTone(connectionState.status)}`, children: backendLabel(activeBackend) }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "status-pill tone-neutral", children: foregroundApp?.displayName ?? "App unavailable" })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "status-pill tone-neutral", children: foregroundApp?.displayName ?? "App unavailable" }),
+            latestRemoteAction ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "span",
+              {
+                className: `remote-feedback-pill tone-${feedbackTone(latestRemoteAction.status)}`,
+                title: latestRemoteAction.detail,
+                "aria-live": "polite",
+                children: [
+                  "Last: ",
+                  latestRemoteAction.title
+                ]
+              },
+              latestRemoteAction.id
+            ) : null
           ] })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "remote-stage", children: [
