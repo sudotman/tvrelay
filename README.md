@@ -1,34 +1,20 @@
-# Android TV Remote
+# tv relay 
+open source android tv remote! 
 
-Desktop app for controlling an Android TV from macOS or Windows using Electron, React, and TypeScript.
+an electron app for controlling any smart tv from macOS or Windows using Electron, React, and TypeScript
 
-The app supports two connection paths:
+the app will work with most android tvs/smart tvs.
 
-- `ADB`: the most reliable path in this project today. It powers navigation, media controls, text input, and installed-app launch.
-- `Native Remote`: the Android TV Remote Service path used by Google TV style software remotes. It can be more convenient when it works, but it is less consistent across TVs.
 
-## Current Product Direction
+## adb vs native
+adb is the most universally supported path with the caveat of having to enable developer options and occasional input lag if the local network clogs over wireless adb. 
 
-- Prefer `ADB` as the default setup path.
-- Keep `Native Remote` available as an optional extra.
-- Fall back to ADB-backed features for typing and installed apps even when the active control path is native.
+native is the more reliable but less featureful second child. the input lag is close to zero since it functions like your traditional tv remote. can't do the apps fetching, apps installation, input texts etc 
 
-## Why Native Exists
 
-Native remote has a few real advantages:
+in my personal experience, the best setup is where you connect through adb and then also do a native pair on top of it - allowing you to have native speed for the basic remote functionality while adb still exists for you for everything else like input 
 
-- It does not depend on developer options or wireless ADB setup.
-- It is closer to the built-in “phone remote” experience on supported TVs.
-- It can be useful for simple navigation and media controls on TVs where ADB is unavailable.
-
-But in this codebase, ADB is still the better daily-driver path because:
-
-- it is more predictable
-- text input is ADB-backed
-- installed-app discovery and launch are ADB-backed
-- native pairing behavior varies by TV and sometimes fails to surface a code prompt reliably
-
-## Stack
+## stack
 
 - Electron
 - React
@@ -39,7 +25,7 @@ But in this codebase, ADB is still the better daily-driver path because:
 - Native discovery via `bonjour-service`
 - Native remote protocol via `androidtv-remote`
 
-## Project Layout
+## project layout
 
 ```text
 src/
@@ -70,7 +56,7 @@ src/
     types.ts
 ```
 
-## Key Modules
+## key modules
 
 - `src/main/services/deviceManager.ts`
   Coordinates saved devices, active device state, native-vs-ADB connection order, reconnects, and capability exposure.
@@ -85,71 +71,71 @@ src/
 - `src/renderer/src/App.tsx`
   Main desktop UI and setup flow.
 
-## Development
+## development
 
-Install dependencies:
+install dependencies:
 
 ```bash
 npm install
 ```
 
-Start the app in development:
+start the app in development:
 
 ```bash
 npm run dev
 ```
 
-Type-check:
+type-check:
 
 ```bash
 npm run typecheck
 ```
 
-Run tests:
+run tests:
 
 ```bash
 npm test
 ```
 
-Build production bundles:
+build production bundles:
 
 ```bash
 npm run build
 ```
 
-Create packaged artifacts:
+create packaged artifacts:
 
 ```bash
 npm run dist
 ```
 
-Build release packages locally without publishing:
+build release packages locally without publishing:
 
 ```bash
 npm run release:build
 ```
 
-Build only macOS release packages locally:
+build only macOS release packages locally:
 
 ```bash
 npm run release:build:mac
 ```
 
-Build only Windows release packages locally:
+build only Windows release packages locally:
 
 ```bash
 npm run release:build:win
 ```
 
-## Versioning And Releases
+## versioning and releases
 
-This repo now uses a tag-driven GitHub release flow.
+tag driven - github release flow
 
-- Run the `Version Bump` GitHub Actions workflow to create the next version, commit the updated `package.json`, and push a matching `v*` tag.
-- Pushing a `v*` tag triggers the `Release` workflow automatically.
-- The release workflow validates the app with `typecheck`, `test`, and `build`, then creates macOS and Windows packages and uploads them to the GitHub Release.
+- run the `Version Bump` GitHub Actions workflow to create the next version, commit the updated `package.json`, and push a matching `v*` tag.
+- pushing a `v*` tag triggers the `Release` workflow automatically.
+- the release workflow validates the app with `typecheck`, `test`, and `build`, then creates macOS and Windows packages and uploads them to the GitHub Release.
 
-Local version helpers are available too:
+local version helpers are available too:
 
 ```bash
 npm run version:patch
@@ -157,34 +143,25 @@ npm run version:minor
 npm run version:major
 ```
 
-These use `npm version`, which updates `package.json`, updates `package-lock.json`, creates a git commit, and creates a matching tag.
+these use `npm version`, which updates `package.json`, updates `package-lock.json`, creates a git commit, and creates a matching tag.
 
-For the full release checklist and workflow details, see [docs/RELEASING.md](docs/RELEASING.md).
+for the full release checklist and workflow details, see [docs/RELEASING.md](docs/RELEASING.md).
 
-## Testing
+## testing
 
-Current tests cover:
+current tests cover:
 
 - ADB parser behavior
 - mocked ADB integration paths
 - reconnect and device-manager logic
 
-Real-device manual testing is still important for:
+real-device manual testing is still important for:
 
 - wireless ADB pairing
 - native remote pairing
 - connection recovery
 - device-specific remote quirks
 
-## Known Limitations
+## contributing
+all contributions are welcome. commit, PR and we shall merge!
 
-- Native remote is less reliable than ADB on some TVs.
-- Direct text input and installed-app browsing still depend on ADB.
-- Windows packaging exists in config but should be verified on Windows hardware.
-- TV-specific behaviors can differ even when the protocol path is nominally supported.
-
-## Recommended Usage
-
-1. Choose a TV.
-2. Connect with ADB first.
-3. Use native remote only if you specifically want it and the TV behaves well with it.

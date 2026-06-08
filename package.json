@@ -1,6 +1,6 @@
 {
   "name": "android-tv-remote-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Wireless-first Android TV remote desktop app powered by ADB.",
   "author": "Satyam Kashyap",
   "type": "module",
