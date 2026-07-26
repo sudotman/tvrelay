@@ -34,7 +34,11 @@ jobs:
           npm run build
 
       - name: Build macOS packages
-        run: npx electron-builder --mac dmg zip --publish never
+        run: |
+          npm run prepare:scrcpy
+          test -x vendor/scrcpy/scrcpy
+          test -x vendor/scrcpy/adb
+          npx electron-builder --mac dmg zip --publish never
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
@@ -66,7 +70,12 @@ jobs:
           npm run build
 
       - name: Build Windows packages
-        run: npx electron-builder --win nsis zip --publish never
+        shell: pwsh
+        run: |
+          npm run prepare:scrcpy
+          if (-not (Test-Path "vendor/scrcpy/scrcpy.exe")) { throw "scrcpy.exe was not prepared" }
+          if (-not (Test-Path "vendor/scrcpy/adb.exe")) { throw "adb.exe was not prepared" }
+          npx electron-builder --win nsis zip --publish never
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4

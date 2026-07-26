@@ -84,7 +84,7 @@ async function bootstrap(): Promise<void> {
   const remoteController = new RemoteController(deviceManager, adbClient, nativeRemoteService)
   const appController = new AppController(deviceManager, adbClient)
   const actionController = new ActionController(deviceManager, remoteController, appController)
-  const scrcpyController = new ScrcpyController(deviceManager)
+  const scrcpyController = new ScrcpyController(deviceManager, adbLocator)
   const sideloadController = new SideloadController(deviceManager, adbClient)
 
   registerIpc({

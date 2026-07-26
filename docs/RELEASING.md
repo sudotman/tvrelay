@@ -23,6 +23,8 @@ On every `v*` tag:
 - runs `npm run typecheck`
 - runs `npm test`
 - runs `npm run build`
+- downloads the pinned official scrcpy portable runtime and verifies its SHA-256 checksum
+- packages scrcpy and its matching ADB binary inside the app
 - builds macOS packages on `macos-latest`
 - builds Windows packages on `windows-latest`
 - creates a GitHub Release
@@ -76,4 +78,6 @@ npm run release:build:win
 
 - macOS signing is intentionally not auto-discovered in CI right now.
 - The release workflow is designed to publish unsigned artifacts unless you add signing secrets later.
+- `scripts/prepare-scrcpy.mjs` pins the scrcpy version used by release packages. Update that version only after checking the official release assets for macOS ARM64, macOS x64, Windows x64, and Windows x86.
+- Packaged builds do not depend on a terminal `PATH` for scrcpy or ADB. The launcher passes the packaged ADB path through scrcpy's supported `ADB` environment override.
 - If packaging targets or release naming change, update this file and `README.md` in the same change.

@@ -50,6 +50,7 @@ type RemoteButton = {
   label: string
   command: RemoteCommand
   accent?: boolean
+  glyph: string
 }
 
 const viewTabs: Array<{ id: TabId; label: string; detail: string }> = [
@@ -59,26 +60,26 @@ const viewTabs: Array<{ id: TabId; label: string; detail: string }> = [
 ]
 
 const coreRemoteButtons: RemoteButton[] = [
-  { label: 'Home', command: 'home' },
-  { label: 'Back', command: 'back' },
-  { label: 'Menu', command: 'menu' },
-  { label: 'Apps', command: 'appSwitch' },
-  { label: 'Power', command: 'power', accent: true },
-  { label: 'Sleep', command: 'sleep' }
+  { label: 'Home', command: 'home', glyph: '⌂' },
+  { label: 'Back', command: 'back', glyph: '↩' },
+  { label: 'Menu', command: 'menu', glyph: '☰' },
+  { label: 'Apps', command: 'appSwitch', glyph: '▦' },
+  { label: 'Power', command: 'power', accent: true, glyph: '⏻' },
+  { label: 'Sleep', command: 'sleep', glyph: '◐' }
 ]
 
 const mediaRemoteButtons: RemoteButton[] = [
-  { label: 'Play/Pause', command: 'playPause' },
-  { label: 'Rewind', command: 'rewind' },
-  { label: 'Fast Forward', command: 'fastForward' },
-  { label: 'Previous', command: 'previous' },
-  { label: 'Next', command: 'next' }
+  { label: 'Play/Pause', command: 'playPause', glyph: '▶' },
+  { label: 'Rewind', command: 'rewind', glyph: '≪' },
+  { label: 'Fast Forward', command: 'fastForward', glyph: '≫' },
+  { label: 'Previous', command: 'previous', glyph: 'Ⅰ◀' },
+  { label: 'Next', command: 'next', glyph: '▶Ⅰ' }
 ]
 
 const soundRemoteButtons: RemoteButton[] = [
-  { label: 'Mute', command: 'mute' },
-  { label: 'Vol +', command: 'volumeUp' },
-  { label: 'Vol -', command: 'volumeDown' }
+  { label: 'Mute', command: 'mute', glyph: '×' },
+  { label: 'Vol +', command: 'volumeUp', glyph: '+' },
+  { label: 'Vol -', command: 'volumeDown', glyph: '−' }
 ]
 
 const favoriteHotkeys: FavoriteAppHotkey[] = ['1', '2', '3', '4', '5', '6', '7', '8', '9']
@@ -440,7 +441,6 @@ export function App() {
   const visiblePaletteItems = filterPaletteItems(paletteItems, deferredPaletteQuery)
   const latestAction = actionFeed[0] ?? null
   const latestRemoteAction = actionFeed.find((item) => item.kind === 'remote') ?? null
-  const activeView = viewTabs.find((item) => item.id === tab) ?? viewTabs[0]
   const viewStatus = (() => {
     if (tab === 'setup') {
       if (waitingForNativeCode) {
@@ -557,10 +557,6 @@ export function App() {
         : capabilities.apps
           ? 'positive'
           : 'warning'
-  const liveTone: 'neutral' | 'positive' | 'danger' | 'warning' = latestAction
-    ? feedbackTone(latestAction.status)
-    : connectionTone
-
   function canUseAdbCard(): boolean {
     return Boolean(diagnostics?.adb.available && activeDevice && !health?.adb?.ready)
   }
@@ -1632,6 +1628,7 @@ export function App() {
         onClick={() => void sendRemoteCommand(button.command)}
         disabled={!isConnected || isPending || isCoolingDown}
       >
+        <span className="command-glyph" aria-hidden="true">{button.glyph}</span>
         {renderRemoteButtonCopy(button)}
       </button>
     )
@@ -2615,130 +2612,134 @@ export function App() {
 
       {renderCommandPalette()}
 
-      <div className="shell-layout">
-        <aside className={`side-rail rail-${connectionTone}`}>
-          <div className="rail-brand">
-            <p className="eyebrow">Android TV Remote</p>
-            <h1>Relay</h1>
-            <p className="rail-copy">A dependable desktop remote for Android TV, designed around clear state and fast control.</p>
-          </div>
+      <header className="app-header">
+        <button className="app-brand" type="button" onClick={() => setTab('remote')} aria-label="Open remote">
+          <span className="app-brand-mark" aria-hidden="true">
+            <span />
+          </span>
+          <span>
+            <strong>Relay</strong>
+            <small>Android TV Remote</small>
+          </span>
+        </button>
 
-          <nav className="rail-nav" aria-label="Views">
-            {viewTabs.map((item) => (
+        <nav className="top-nav" aria-label="Views">
+          {viewTabs.map((item) => {
+            const unavailable = item.id !== 'setup' && !isConnected
+            return (
               <button
                 key={item.id}
-                className={`rail-tab ${tab === item.id ? 'active' : ''}`}
+                className={`top-nav-item ${tab === item.id ? 'active' : ''} ${unavailable ? 'unavailable' : ''}`}
                 type="button"
                 onClick={() => setTab(item.id)}
-                title={item.detail}
+                title={unavailable ? `${item.label} becomes available after connecting a TV.` : item.detail}
               >
-                <strong>{item.label}</strong>
-                <span>{item.detail}</span>
+                {item.label}
               </button>
-            ))}
-          </nav>
+            )
+          })}
+        </nav>
 
-          <div className="rail-session">
-            <div className="rail-session-top">
-              <span className={`status-pill tone-${connectionTone}`}>{formatConnectionStatus(connectionState.status)}</span>
-              <span className="status-pill tone-neutral">{isConnected ? backendLabel(activeBackend) : `Preferred: ${preferredPathLabel}`}</span>
-            </div>
-            <strong>{activeDevice?.name ?? setupTargetName}</strong>
-            <p>{selectedHostLabel}</p>
-            <small>{liveStatusTitle}</small>
+        <div className="app-header-actions">
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => setThemeMode((current) => (current === 'light' ? 'dark' : 'light'))}
+            aria-label={`Use ${themeMode === 'light' ? 'dark' : 'light'} theme`}
+            title={`Use ${themeMode === 'light' ? 'dark' : 'light'} theme`}
+          >
+            {themeMode === 'light' ? '◐' : '○'}
+          </button>
+          <button className="command-palette-button" type="button" onClick={() => setPaletteOpen(true)}>
+            <span>Commands</span>
+            <kbd>⌘ K</kbd>
+          </button>
+        </div>
+      </header>
+
+      <section className={`session-bar tone-${connectionTone}`} aria-live="polite">
+        <div className="session-identity">
+          <span className={`session-dot dot-${connectionTone}`} aria-hidden="true" />
+          <div>
+            <strong>{isConnected ? activeDevice?.name ?? setupTargetName : formatConnectionStatus(connectionState.status)}</strong>
+            <span>
+              {isConnected
+                ? `${selectedHostLabel} · ${backendLabel(activeBackend)}`
+                : hasSelectedTv
+                  ? `${setupTargetName} · Preferred ${preferredPathLabel}`
+                  : 'Choose a TV, then connect with ADB'}
+            </span>
           </div>
+        </div>
 
-          <div className="rail-actions">
-            <button
-              className="ghost-button theme-toggle"
-              type="button"
-              onClick={() => setThemeMode((current) => (current === 'light' ? 'dark' : 'light'))}
-              aria-pressed={themeMode === 'dark'}
-            >
-              <span>Theme</span>
-              <strong>{themeMode === 'light' ? 'Light' : 'Dark'}</strong>
-            </button>
-            <button className="primary-button" type="button" onClick={() => setPaletteOpen(true)}>
-              Command palette
-            </button>
-            {isConnected ? (
-              <>
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={() => void wakeAndReconnect()}
-                  disabled={busy === 'wake' || !capabilities.typing}
-                >
-                  Wake / reconnect
+        <div className="session-message">
+          <strong>{liveStatusTitle}</strong>
+          <span>{liveStatusDetail}</span>
+        </div>
+
+        <div className="session-actions">
+          {isConnected ? (
+            <>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => void wakeAndReconnect()}
+                disabled={busy === 'wake' || !capabilities.typing}
+              >
+                Wake / reconnect
+              </button>
+              <button
+                className="ghost-button danger-button"
+                type="button"
+                onClick={() => void disconnect()}
+                disabled={busy === 'disconnect'}
+              >
+                Disconnect
+              </button>
+            </>
+          ) : (
+            <>
+              {tab !== 'setup' ? (
+                <button className="ghost-button" type="button" onClick={() => setTab('setup')}>
+                  Open setup
                 </button>
-                <button
-                  className="ghost-button danger-button"
-                  type="button"
-                  onClick={() => void disconnect()}
-                  disabled={busy === 'disconnect'}
-                >
-                  Disconnect
-                </button>
-              </>
-            ) : (
-              <>
-                {tab !== 'setup' ? (
-                  <button className="primary-button" type="button" onClick={() => setTab('setup')}>
-                    Open setup
-                  </button>
-                ) : null}
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={() => void connectUsingSetup('adb')}
-                  disabled={!hasSelectedTv || !form.adbEnabled || busy === 'connect'}
-                >
-                  {compactAdbLabel}
-                </button>
-              </>
-            )}
+              ) : null}
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => void connectUsingSetup('adb')}
+                disabled={!hasSelectedTv || !form.adbEnabled || busy === 'connect'}
+              >
+                {compactAdbLabel}
+              </button>
+            </>
+          )}
+        </div>
+      </section>
+
+      <section className="main-stage">
+        <header className="view-heading">
+          <div>
+            <p className="eyebrow">{viewStatus.eyebrow}</p>
+            <h2>{viewStatus.title}</h2>
+            <p>{viewStatus.detail}</p>
           </div>
-        </aside>
+          <div className="view-meta">
+            <span className={`meta-status tone-${adbTone}`}>
+              ADB {getBackendHealthLabel(health?.adb, diagnostics?.adb.available ? 'not ready' : 'unavailable')}
+            </span>
+            {tab === 'setup' ? (
+              <span className={`meta-status tone-${supportTone}`}>Native {supportStatus.title.toLowerCase()}</span>
+            ) : null}
+          </div>
+        </header>
 
-        <section className="main-stage">
-          <header className={`hero-ribbon ribbon-${connectionTone}`}>
-            <div className="hero-copy">
-              <p className="eyebrow">{viewStatus.eyebrow}</p>
-              <h2>{viewStatus.title}</h2>
-              <p className="hero-detail">{viewStatus.detail}</p>
-            </div>
-
-            <div className="signal-strip">
-              <div className={`signal-tile signal-${connectionTone}`}>
-                <span className="focus-label">Session</span>
-                <strong>{formatConnectionStatus(connectionState.status)}</strong>
-                <small>{isConnected ? backendLabel(activeBackend) : 'No active TV session'}</small>
-              </div>
-              <div className={`signal-tile signal-${adbTone}`}>
-                <span className="focus-label">ADB</span>
-                <strong>{getBackendHealthLabel(health?.adb, diagnostics?.adb.available ? 'Not ready' : 'Unavailable')}</strong>
-                <small>{diagnostics?.adb.available ? diagnostics.adb.version ?? 'ADB detected' : 'Install ADB to continue'}</small>
-              </div>
-              <div className={`signal-tile signal-${supportTone}`}>
-                <span className="focus-label">{supportStatus.label}</span>
-                <strong>{supportStatus.title}</strong>
-                <small>{supportStatus.detail}</small>
-              </div>
-              <div className={`signal-tile signal-${liveTone}`}>
-                <span className="focus-label">Live status</span>
-                <strong>{liveStatusTitle}</strong>
-                <small>{liveStatusDetail}</small>
-              </div>
-            </div>
-          </header>
-
-          <main className="workspace-shell">
-            {tab === 'setup' ? renderSetupView() : null}
-            {tab === 'remote' ? renderRemoteView() : null}
-            {tab === 'apps' ? renderAppsView() : null}
-          </main>
-        </section>
-      </div>
+        <main className="workspace-shell">
+          {tab === 'setup' ? renderSetupView() : null}
+          {tab === 'remote' ? renderRemoteView() : null}
+          {tab === 'apps' ? renderAppsView() : null}
+        </main>
+      </section>
     </div>
   )
 }

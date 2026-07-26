@@ -8,12 +8,12 @@ the app will work with most android tvs/smart tvs.
 [![Demo screenshot of TV Relay desktop application showing the Android TV setup and control interface with dark theme. The left sidebar displays setup options, device roster showing a connected bedroom TV at 192.168.29.40, remote controls for playback and typing, and apps launcher. The main content area shows the configuration panel for connecting with ADB, displaying fields for ADB pair port (37099), connect port (5555), and pair code (654321), along with diagnostics showing both ADB and Native Remote as Ready. The interface has a professional dark blue color scheme with blue accent buttons and status indicators.](https://github.com/sudotman/sudotman/blob/main/demos/tvrelay/ss1.png?raw=true)](https://github.com/sudotman/sudotman/blob/main/demos/tvrelay/ss1.png?raw=true)
 
 ## adb vs native
-adb is the most universally supported path with the caveat of having to enable developer options and occasional input lag if the local network clogs over wireless adb. 
 
-native is the more reliable but less featureful second child. the input lag is close to zero since it functions like your traditional tv remote. can't do the apps fetching, apps installation, input texts etc 
+ADB is the default and most broadly useful path. It powers the remote, typing, installed-app discovery and launch, APK sideloading, and screen mirroring.
 
+Native Remote is optional. It can feel faster on TVs where the protocol behaves well, but pairing and reconnect behavior varies by manufacturer. Typing, app management, and scrcpy still use ADB even when Native Remote is active.
 
-in my personal experience, the best setup is where you connect through adb and then also do a native pair on top of it - allowing you to have native speed for the basic remote functionality while adb still exists for you for everything else like input 
+Release packages include the official portable scrcpy runtime and its matching ADB binary. Screen mirroring therefore does not depend on the shell `PATH` that happened to exist when the desktop app was opened.
 
 ## stack
 
@@ -104,6 +104,12 @@ build production bundles:
 npm run build
 ```
 
+download and verify the scrcpy runtime used by release packages:
+
+```bash
+npm run prepare:scrcpy
+```
+
 create packaged artifacts:
 
 ```bash
@@ -165,4 +171,3 @@ real-device manual testing is still important for:
 
 ## contributing
 all contributions are welcome. commit, PR and we shall merge!
-

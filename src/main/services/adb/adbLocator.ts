@@ -37,6 +37,10 @@ export class AdbLocator {
       candidates.add(process.env.ADB_PATH)
     }
 
+    // Release packages include the official portable scrcpy bundle, which also
+    // contains a matching adb binary. Prefer it over a GUI process's incomplete PATH.
+    candidates.add(path.join(process.resourcesPath, 'scrcpy', executableName))
+
     for (const segment of (process.env.PATH ?? '').split(path.delimiter)) {
       if (segment) {
         candidates.add(path.join(segment, executableName))

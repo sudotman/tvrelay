@@ -167,6 +167,7 @@ class AdbLocator {
     if (process.env.ADB_PATH) {
       candidates.add(process.env.ADB_PATH);
     }
+    candidates.add(path.join(process.resourcesPath, "scrcpy", executableName));
     for (const segment of (process.env.PATH ?? "").split(path.delimiter)) {
       if (segment) {
         candidates.add(path.join(segment, executableName));
@@ -2663,7 +2664,14 @@ class NativeRemoteService extends EventEmitter {
   }
 }
 const execFileAsync = promisify(execFile);
-const INSTALL_HINT = process.platform === "darwin" ? "Install scrcpy with Homebrew: brew install scrcpy." : process.platform === "win32" ? "Install scrcpy with winget: winget install --exact Genymobile.scrcpy." : "Install scrcpy from your package manager, then make sure it is on PATH.";
+const STATUS_CACHE_MS = 3e4;
+const LAUNCH_GRACE_MS = 650;
+function installHint() {
+  if (app.isPackaged) {
+    return "The bundled scrcpy component is missing or damaged. Reinstall the latest Relay release.";
+  }
+  return process.platform === "darwin" ? "Run `npm run prepare:scrcpy`, or install scrcpy with Homebrew." : process.platform === "win32" ? "Run `npm run prepare:scrcpy`, or install scrcpy with WinGet." : "Install scrcpy from your package manager, then make sure it is on PATH.";
+}
 function createFeedback$1(input) {
   return {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -2672,13 +2680,21 @@ function createFeedback$1(input) {
   };
 }
 function candidatePaths() {
-  const candidates = ["scrcpy"];
+  const executableName = process.platform === "win32" ? "scrcpy.exe" : "scrcpy";
+  const candidates = [
+    path.join(process.resourcesPath, "scrcpy", executableName),
+    path.join(app.getAppPath(), "vendor", "scrcpy", executableName),
+    executableName
+  ];
   if (process.platform === "darwin") {
     candidates.push("/opt/homebrew/bin/scrcpy", "/usr/local/bin/scrcpy");
   }
   if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA;
+    if (localAppData) {
+      candidates.push(path.join(localAppData, "Microsoft", "WinGet", "Links", "scrcpy.exe"));
+    }
     candidates.push(
-      "scrcpy.exe",
       "C:\\Program Files\\scrcpy\\scrcpy.exe",
       "C:\\Program Files (x86)\\scrcpy\\scrcpy.exe"
     );
@@ -2689,17 +2705,20 @@ function parseVersion(output) {
   return output.split(/\r?\n/).map((line) => line.trim()).find((line) => line.toLowerCase().startsWith("scrcpy")) ?? "scrcpy detected";
 }
 class ScrcpyController {
-  constructor(deviceManager2) {
+  constructor(deviceManager2, adbLocator) {
     this.deviceManager = deviceManager2;
+    this.adbLocator = adbLocator;
   }
   cachedStatus = null;
+  cachedStatusAt = 0;
   async getStatus(forceRefresh = false) {
-    if (this.cachedStatus && !forceRefresh) {
+    if (this.cachedStatus && !forceRefresh && Date.now() - this.cachedStatusAt < STATUS_CACHE_MS) {
       return this.cachedStatus;
     }
     for (const candidate of candidatePaths()) {
       try {
         const { stdout, stderr } = await execFileAsync(candidate, ["--version"], {
+          cwd: path.dirname(candidate),
           timeout: 6e3,
           maxBuffer: 512 * 1024
         });
@@ -2708,20 +2727,22 @@ class ScrcpyController {
           path: candidate,
           version: parseVersion(`${stdout}
 ${stderr}`),
-          installHint: INSTALL_HINT
+          installHint: installHint()
         };
+        this.cachedStatusAt = Date.now();
         return this.cachedStatus;
       } catch {
       }
     }
     this.cachedStatus = {
       available: false,
-      installHint: INSTALL_HINT
+      installHint: installHint()
     };
+    this.cachedStatusAt = Date.now();
     return this.cachedStatus;
   }
   async launch(preset) {
-    const status = await this.getStatus();
+    const status = await this.getStatus(true);
     if (!status.available || !status.path) {
       return createFeedback$1({
         status: "blocked",
@@ -2734,21 +2755,64 @@ ${stderr}`),
     if (!activeDevice) {
       throw new Error("Connect to a TV before opening scrcpy.");
     }
+    const adbInfo = await this.adbLocator.locate();
+    if (!adbInfo.available || !adbInfo.path) {
+      return createFeedback$1({
+        status: "blocked",
+        kind: "scrcpy",
+        title: "ADB is not available",
+        detail: adbInfo.installHint
+      });
+    }
     const args = await this.deviceManager.withAdbAccess(async (serial) => [
       "-s",
       serial,
       ...this.getPresetArgs(preset)
     ]);
     const child = spawn(status.path, args, {
+      cwd: path.dirname(status.path),
       detached: true,
-      stdio: "ignore"
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        // scrcpy officially supports ADB as an explicit binary override. This
+        // avoids relying on PATH when Relay is opened from Finder/Start Menu.
+        ADB: adbInfo.path
+      },
+      windowsHide: false
     });
-    child.unref();
+    await new Promise((resolve, reject) => {
+      let launched = false;
+      const launchTimer = setTimeout(() => {
+        launched = true;
+        child.removeListener("error", onError);
+        child.removeListener("exit", onExit);
+        child.unref();
+        resolve();
+      }, LAUNCH_GRACE_MS);
+      const onError = (error) => {
+        clearTimeout(launchTimer);
+        reject(error);
+      };
+      const onExit = (code, signal) => {
+        if (launched) {
+          return;
+        }
+        clearTimeout(launchTimer);
+        reject(
+          new Error(
+            `scrcpy exited before opening${code === null ? "" : ` (code ${code})`}${signal ? ` (${signal})` : ""}.`
+          )
+        );
+      };
+      child.once("error", onError);
+      child.once("exit", onExit);
+    });
     return createFeedback$1({
       status: "sent",
       kind: "scrcpy",
       title: "scrcpy launched",
-      detail: preset === "record" ? "scrcpy opened in recording mode using the active TV over ADB." : "scrcpy opened as a companion mirror using the active TV over ADB."
+      detail: preset === "record" ? "scrcpy opened in recording mode with Relay’s packaged ADB runtime." : "scrcpy opened as a companion mirror with Relay’s packaged ADB runtime."
     });
   }
   getPresetArgs(preset) {
@@ -2883,7 +2947,7 @@ async function bootstrap() {
   const remoteController = new RemoteController(deviceManager, adbClient, nativeRemoteService);
   const appController = new AppController(deviceManager, adbClient);
   const actionController = new ActionController(deviceManager, remoteController, appController);
-  const scrcpyController = new ScrcpyController(deviceManager);
+  const scrcpyController = new ScrcpyController(deviceManager, adbLocator);
   const sideloadController = new SideloadController(deviceManager, adbClient);
   registerIpc({
     deviceManager,

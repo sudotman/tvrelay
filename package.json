@@ -8,10 +8,11 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "dist": "npm run build && electron-builder",
-    "release:build": "npm run build && electron-builder --publish never",
-    "release:build:mac": "npm run build && electron-builder --mac dmg zip --publish never",
-    "release:build:win": "npm run build && electron-builder --win nsis zip --publish never",
+    "prepare:scrcpy": "node scripts/prepare-scrcpy.mjs",
+    "dist": "npm run build && npm run prepare:scrcpy && electron-builder",
+    "release:build": "npm run build && npm run prepare:scrcpy && electron-builder --publish never",
+    "release:build:mac": "npm run build && npm run prepare:scrcpy && electron-builder --mac dmg zip --publish never",
+    "release:build:win": "npm run build && npm run prepare:scrcpy && electron-builder --win nsis zip --publish never",
     "version:patch": "npm version patch",
     "version:minor": "npm version minor",
     "version:major": "npm version major",
@@ -24,6 +25,15 @@
     "files": [
       "out/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/scrcpy",
+        "to": "scrcpy",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "mac": {
       "identity": null,
