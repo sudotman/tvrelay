@@ -4,13 +4,14 @@ import { ipcMain, app, dialog, BrowserWindow } from "electron";
 import fs from "node:fs/promises";
 import os from "node:os";
 import { execFile, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import pkg from "node-apk";
 import Store from "electron-store";
 import { EventEmitter } from "node:events";
 import { Bonjour } from "bonjour-service";
 import { AndroidRemote, RemoteDirection } from "androidtv-remote";
+import http from "node:http";
 import __cjs_mod__ from "node:module";
 const __filename = import.meta.filename;
 const __dirname = import.meta.dirname;
@@ -42,8 +43,11 @@ const IPC_CHANNELS = {
   scrcpyLaunch: "scrcpy.launch",
   sideloadChooseApk: "sideload.chooseApk",
   sideloadInstallApk: "sideload.installApk",
+  webRemoteGetStatus: "webRemote.getStatus",
+  webRemoteUpdate: "webRemote.update",
   connectionStateChanged: "events.connectionStateChanged",
-  devicesChanged: "events.devicesChanged"
+  devicesChanged: "events.devicesChanged",
+  webRemoteStatusChanged: "events.webRemoteStatusChanged"
 };
 function registerIpc(options) {
   const {
@@ -53,6 +57,7 @@ function registerIpc(options) {
     actionController,
     scrcpyController,
     sideloadController,
+    webRemoteServer: webRemoteServer2,
     adbLocator,
     adbClient,
     getMainWindow
@@ -102,6 +107,11 @@ function registerIpc(options) {
     IPC_CHANNELS.sideloadInstallApk,
     (_event, input) => sideloadController.installApk(input.id)
   );
+  ipcMain.handle(IPC_CHANNELS.webRemoteGetStatus, () => webRemoteServer2.getStatus());
+  ipcMain.handle(
+    IPC_CHANNELS.webRemoteUpdate,
+    (_event, input) => webRemoteServer2.update(input)
+  );
   ipcMain.handle(IPC_CHANNELS.diagnosticsGetStatus, async () => {
     const adbInfo = await adbLocator.locate();
     const version = adbInfo.available ? cachedAdbVersion ??= await adbClient.version() : void 0;
@@ -140,6 +150,9 @@ function registerIpc(options) {
   });
   deviceManager2.on("devicesChanged", (devices) => {
     getMainWindow()?.webContents.send(IPC_CHANNELS.devicesChanged, devices);
+  });
+  webRemoteServer2.on("status", (status) => {
+    getMainWindow()?.webContents.send(IPC_CHANNELS.webRemoteStatusChanged, status);
   });
 }
 async function fileExists(candidate) {
@@ -519,9 +532,9 @@ ${stderr}`.toLowerCase();
       });
       const apk = new Apk(apkPath);
       try {
-        const [manifest, resources] = await Promise.all([apk.getManifestInfo(), apk.getResources()]);
-        const displayName = this.resolveAppLabel(manifest.applicationLabel, resources) ?? app2.displayName;
-        const iconDataUrl = await this.resolveAppIconDataUrl(apk, manifest.applicationIcon, resources);
+        const [manifest2, resources] = await Promise.all([apk.getManifestInfo(), apk.getResources()]);
+        const displayName = this.resolveAppLabel(manifest2.applicationLabel, resources) ?? app2.displayName;
+        const iconDataUrl = await this.resolveAppIconDataUrl(apk, manifest2.applicationIcon, resources);
         return {
           ...app2,
           displayName,
@@ -2888,8 +2901,1028 @@ class SideloadController {
     }
   }
 }
+const DEFAULT_WEB_REMOTE_PORT = 8479;
+function createWebRemoteToken() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let token = "";
+  for (let index = 0; index < 12; index += 1) {
+    token += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return token;
+}
+class ElectronSettingsStore {
+  store = new Store({
+    name: "settings",
+    defaults: {
+      webRemote: {
+        enabled: false,
+        port: DEFAULT_WEB_REMOTE_PORT,
+        token: createWebRemoteToken()
+      }
+    }
+  });
+  getWebRemote() {
+    const stored = this.store.get("webRemote");
+    return {
+      enabled: Boolean(stored?.enabled),
+      port: Number(stored?.port) || DEFAULT_WEB_REMOTE_PORT,
+      token: stored?.token || createWebRemoteToken()
+    };
+  }
+  setWebRemote(settings) {
+    this.store.set("webRemote", settings);
+  }
+}
+const EC_LEVEL_M_BITS = 0;
+const FORMAT_MASK = 21522;
+const ALIGNMENT_CENTERS = [
+  [],
+  [],
+  [6, 18],
+  [6, 22],
+  [6, 26],
+  [6, 30],
+  [6, 34],
+  [6, 22, 38],
+  [6, 24, 42],
+  [6, 26, 46],
+  [6, 28, 50]
+];
+const BLOCK_LAYOUT = {
+  1: { ecCodewordsPerBlock: 10, groups: [{ blocks: 1, dataCodewords: 16 }] },
+  2: { ecCodewordsPerBlock: 16, groups: [{ blocks: 1, dataCodewords: 28 }] },
+  3: { ecCodewordsPerBlock: 26, groups: [{ blocks: 1, dataCodewords: 44 }] },
+  4: { ecCodewordsPerBlock: 18, groups: [{ blocks: 2, dataCodewords: 32 }] },
+  5: { ecCodewordsPerBlock: 24, groups: [{ blocks: 2, dataCodewords: 43 }] },
+  6: { ecCodewordsPerBlock: 16, groups: [{ blocks: 4, dataCodewords: 27 }] },
+  7: { ecCodewordsPerBlock: 18, groups: [{ blocks: 4, dataCodewords: 31 }] },
+  8: {
+    ecCodewordsPerBlock: 22,
+    groups: [
+      { blocks: 2, dataCodewords: 38 },
+      { blocks: 2, dataCodewords: 39 }
+    ]
+  },
+  9: {
+    ecCodewordsPerBlock: 22,
+    groups: [
+      { blocks: 3, dataCodewords: 36 },
+      { blocks: 2, dataCodewords: 37 }
+    ]
+  },
+  10: {
+    ecCodewordsPerBlock: 26,
+    groups: [
+      { blocks: 4, dataCodewords: 43 },
+      { blocks: 1, dataCodewords: 44 }
+    ]
+  }
+};
+const EXP_TABLE = new Uint8Array(256);
+const LOG_TABLE = new Uint8Array(256);
+for (let index = 0, value = 1; index < 255; index += 1) {
+  EXP_TABLE[index] = value;
+  LOG_TABLE[value] = index;
+  value <<= 1;
+  if (value & 256) {
+    value ^= 285;
+  }
+}
+function galoisMultiply(left, right) {
+  if (left === 0 || right === 0) {
+    return 0;
+  }
+  return EXP_TABLE[(LOG_TABLE[left] + LOG_TABLE[right]) % 255];
+}
+function buildGeneratorPolynomial(degree) {
+  let polynomial = [1];
+  for (let index = 0; index < degree; index += 1) {
+    const next = new Array(polynomial.length + 1).fill(0);
+    for (let position = 0; position < polynomial.length; position += 1) {
+      next[position] ^= polynomial[position];
+      next[position + 1] ^= galoisMultiply(polynomial[position], EXP_TABLE[index]);
+    }
+    polynomial = next;
+  }
+  return polynomial;
+}
+function computeErrorCorrection(data, ecCodewords) {
+  const generator = buildGeneratorPolynomial(ecCodewords);
+  const remainder = new Array(ecCodewords).fill(0);
+  for (const byte of data) {
+    const factor = byte ^ remainder[0];
+    remainder.shift();
+    remainder.push(0);
+    if (factor !== 0) {
+      for (let index = 0; index < ecCodewords; index += 1) {
+        remainder[index] ^= galoisMultiply(generator[index + 1], factor);
+      }
+    }
+  }
+  return remainder;
+}
+function totalDataCodewords(version) {
+  return BLOCK_LAYOUT[version].groups.reduce(
+    (total, group) => total + group.blocks * group.dataCodewords,
+    0
+  );
+}
+function characterCountBits(version) {
+  return version < 10 ? 8 : 16;
+}
+function chooseVersion(byteLength) {
+  for (let version = 1; version <= 10; version += 1) {
+    const capacityBits = totalDataCodewords(version) * 8;
+    const requiredBits = 4 + characterCountBits(version) + byteLength * 8;
+    if (requiredBits <= capacityBits) {
+      return version;
+    }
+  }
+  throw new Error("Payload is too long for a version 10 QR code.");
+}
+function buildCodewords(bytes, version) {
+  const capacity = totalDataCodewords(version);
+  const bits = [];
+  const pushBits = (value, length) => {
+    for (let index = length - 1; index >= 0; index -= 1) {
+      bits.push(value >> index & 1);
+    }
+  };
+  pushBits(4, 4);
+  pushBits(bytes.length, characterCountBits(version));
+  for (const byte of bytes) {
+    pushBits(byte, 8);
+  }
+  const capacityBits = capacity * 8;
+  pushBits(0, Math.min(4, capacityBits - bits.length));
+  while (bits.length % 8 !== 0) {
+    bits.push(0);
+  }
+  const codewords = [];
+  for (let index = 0; index < bits.length; index += 8) {
+    let byte = 0;
+    for (let offset = 0; offset < 8; offset += 1) {
+      byte = byte << 1 | bits[index + offset];
+    }
+    codewords.push(byte);
+  }
+  const padBytes = [236, 17];
+  let padIndex = 0;
+  while (codewords.length < capacity) {
+    codewords.push(padBytes[padIndex % 2]);
+    padIndex += 1;
+  }
+  return codewords;
+}
+function interleave(codewords, version) {
+  const layout = BLOCK_LAYOUT[version];
+  const dataBlocks = [];
+  const ecBlocks = [];
+  let cursor = 0;
+  for (const group of layout.groups) {
+    for (let index = 0; index < group.blocks; index += 1) {
+      const block = codewords.slice(cursor, cursor + group.dataCodewords);
+      cursor += group.dataCodewords;
+      dataBlocks.push(block);
+      ecBlocks.push(computeErrorCorrection(block, layout.ecCodewordsPerBlock));
+    }
+  }
+  const result = [];
+  const longestData = Math.max(...dataBlocks.map((block) => block.length));
+  for (let index = 0; index < longestData; index += 1) {
+    for (const block of dataBlocks) {
+      if (index < block.length) {
+        result.push(block[index]);
+      }
+    }
+  }
+  for (let index = 0; index < layout.ecCodewordsPerBlock; index += 1) {
+    for (const block of ecBlocks) {
+      result.push(block[index]);
+    }
+  }
+  return result;
+}
+function createGrid(size) {
+  return Array.from({ length: size }, () => new Array(size).fill(null));
+}
+function placeFinder(grid, row, column) {
+  for (let deltaRow = -1; deltaRow <= 7; deltaRow += 1) {
+    for (let deltaColumn = -1; deltaColumn <= 7; deltaColumn += 1) {
+      const targetRow = row + deltaRow;
+      const targetColumn = column + deltaColumn;
+      if (targetRow < 0 || targetRow >= grid.length || targetColumn < 0 || targetColumn >= grid.length) {
+        continue;
+      }
+      const inRing = deltaRow >= 0 && deltaRow <= 6 && (deltaColumn === 0 || deltaColumn === 6) || deltaColumn >= 0 && deltaColumn <= 6 && (deltaRow === 0 || deltaRow === 6);
+      const inCore = deltaRow >= 2 && deltaRow <= 4 && deltaColumn >= 2 && deltaColumn <= 4;
+      grid[targetRow][targetColumn] = inRing || inCore ? 1 : 0;
+    }
+  }
+}
+function placeAlignment(grid, version) {
+  const centers = ALIGNMENT_CENTERS[version];
+  for (const row of centers) {
+    for (const column of centers) {
+      if (grid[row][column] !== null) {
+        continue;
+      }
+      for (let deltaRow = -2; deltaRow <= 2; deltaRow += 1) {
+        for (let deltaColumn = -2; deltaColumn <= 2; deltaColumn += 1) {
+          const isDark = Math.max(Math.abs(deltaRow), Math.abs(deltaColumn)) !== 1;
+          grid[row + deltaRow][column + deltaColumn] = isDark ? 1 : 0;
+        }
+      }
+    }
+  }
+}
+function placeTimingAndReserved(grid, version) {
+  const size = grid.length;
+  for (let index = 8; index < size - 8; index += 1) {
+    const value = index % 2 === 0 ? 1 : 0;
+    grid[6][index] = value;
+    grid[index][6] = value;
+  }
+  grid[size - 8][8] = 1;
+  for (let index = 0; index <= 8; index += 1) {
+    if (grid[8][index] === null) {
+      grid[8][index] = 0;
+    }
+    if (grid[index][8] === null) {
+      grid[index][8] = 0;
+    }
+  }
+  for (let index = 0; index < 8; index += 1) {
+    if (grid[size - 1 - index][8] === null) {
+      grid[size - 1 - index][8] = 0;
+    }
+    if (grid[8][size - 1 - index] === null) {
+      grid[8][size - 1 - index] = 0;
+    }
+  }
+  if (version >= 7) {
+    for (let index = 0; index < 18; index += 1) {
+      const row = Math.floor(index / 3);
+      const column = index % 3;
+      grid[row][size - 11 + column] = 0;
+      grid[size - 11 + column][row] = 0;
+    }
+  }
+}
+function placeData(grid, codewords) {
+  const size = grid.length;
+  const placed = [];
+  let bitIndex = 0;
+  let upward = true;
+  for (let right = size - 1; right >= 1; right -= 2) {
+    if (right === 6) {
+      right = 5;
+    }
+    for (let step = 0; step < size; step += 1) {
+      const row = upward ? size - 1 - step : step;
+      for (const column of [right, right - 1]) {
+        if (grid[row][column] !== null) {
+          continue;
+        }
+        const byte = codewords[bitIndex >> 3] ?? 0;
+        const bit = byte >> 7 - (bitIndex & 7) & 1;
+        bitIndex += 1;
+        grid[row][column] = bit;
+        placed.push({ row, column, bit });
+      }
+    }
+    upward = !upward;
+  }
+  return placed;
+}
+const MASK_PREDICATES = [
+  (row, column) => (row + column) % 2 === 0,
+  (row) => row % 2 === 0,
+  (_row, column) => column % 3 === 0,
+  (row, column) => (row + column) % 3 === 0,
+  (row, column) => (Math.floor(row / 2) + Math.floor(column / 3)) % 2 === 0,
+  (row, column) => row * column % 2 + row * column % 3 === 0,
+  (row, column) => (row * column % 2 + row * column % 3) % 2 === 0,
+  (row, column) => ((row + column) % 2 + row * column % 3) % 2 === 0
+];
+function computeFormatBits(mask) {
+  const data = EC_LEVEL_M_BITS << 3 | mask;
+  let remainder = data << 10;
+  for (let index = 14; index >= 10; index -= 1) {
+    if (remainder >> index & 1) {
+      remainder ^= 1335 << index - 10;
+    }
+  }
+  return (data << 10 | remainder) ^ FORMAT_MASK;
+}
+function computeVersionBits(version) {
+  let remainder = version << 12;
+  for (let index = 17; index >= 12; index -= 1) {
+    if (remainder >> index & 1) {
+      remainder ^= 7973 << index - 12;
+    }
+  }
+  return version << 12 | remainder;
+}
+function applyFormatInformation(matrix, mask) {
+  const size = matrix.length;
+  const bits = computeFormatBits(mask);
+  for (let index = 0; index < 15; index += 1) {
+    const bit = bits >> index & 1;
+    if (index < 6) {
+      matrix[index][8] = bit;
+    } else if (index === 6) {
+      matrix[7][8] = bit;
+    } else if (index === 7) {
+      matrix[8][8] = bit;
+    } else if (index === 8) {
+      matrix[8][7] = bit;
+    } else {
+      matrix[8][14 - index] = bit;
+    }
+    if (index < 8) {
+      matrix[8][size - 1 - index] = bit;
+    } else {
+      matrix[size - 15 + index][8] = bit;
+    }
+  }
+  matrix[size - 8][8] = 1;
+}
+function applyVersionInformation(matrix, version) {
+  if (version < 7) {
+    return;
+  }
+  const size = matrix.length;
+  const bits = computeVersionBits(version);
+  for (let index = 0; index < 18; index += 1) {
+    const bit = bits >> index & 1;
+    const row = Math.floor(index / 3);
+    const column = index % 3;
+    matrix[row][size - 11 + column] = bit;
+    matrix[size - 11 + column][row] = bit;
+  }
+}
+function scorePenalty(matrix) {
+  const size = matrix.length;
+  let penalty = 0;
+  const scoreLine = (getModule) => {
+    for (let primary = 0; primary < size; primary += 1) {
+      let runValue = getModule(primary, 0);
+      let runLength = 1;
+      for (let secondary = 1; secondary < size; secondary += 1) {
+        const value = getModule(primary, secondary);
+        if (value === runValue) {
+          runLength += 1;
+          continue;
+        }
+        if (runLength >= 5) {
+          penalty += runLength - 2;
+        }
+        runValue = value;
+        runLength = 1;
+      }
+      if (runLength >= 5) {
+        penalty += runLength - 2;
+      }
+    }
+  };
+  scoreLine((row, column) => matrix[row][column]);
+  scoreLine((column, row) => matrix[row][column]);
+  for (let row = 0; row < size - 1; row += 1) {
+    for (let column = 0; column < size - 1; column += 1) {
+      const value = matrix[row][column];
+      if (value === matrix[row][column + 1] && value === matrix[row + 1][column] && value === matrix[row + 1][column + 1]) {
+        penalty += 3;
+      }
+    }
+  }
+  const patterns = [
+    [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0],
+    [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1]
+  ];
+  const matchesPattern = (values, start, pattern) => pattern.every((bit, offset) => values[start + offset] === bit);
+  for (let index = 0; index < size; index += 1) {
+    const rowValues = matrix[index];
+    const columnValues = matrix.map((row) => row[index]);
+    for (let start = 0; start + 11 <= size; start += 1) {
+      for (const pattern of patterns) {
+        if (matchesPattern(rowValues, start, pattern)) {
+          penalty += 40;
+        }
+        if (matchesPattern(columnValues, start, pattern)) {
+          penalty += 40;
+        }
+      }
+    }
+  }
+  const darkModules = matrix.reduce(
+    (total, row) => total + row.reduce((rowTotal, value) => rowTotal + value, 0),
+    0
+  );
+  const darkRatio = darkModules * 100 / (size * size);
+  penalty += Math.floor(Math.abs(darkRatio - 50) / 5) * 10;
+  return penalty;
+}
+function encodeQrCode(text) {
+  const bytes = new TextEncoder().encode(text);
+  const version = chooseVersion(bytes.length);
+  const size = version * 4 + 17;
+  const codewords = interleave(buildCodewords(bytes, version), version);
+  const layout = createGrid(size);
+  placeFinder(layout, 0, 0);
+  placeFinder(layout, 0, size - 7);
+  placeFinder(layout, size - 7, 0);
+  placeAlignment(layout, version);
+  placeTimingAndReserved(layout, version);
+  const dataCells = placeData(layout, codewords);
+  let best = null;
+  for (let mask = 0; mask < 8; mask += 1) {
+    const matrix = layout.map((row) => row.map((value) => value ?? 0));
+    for (const cell of dataCells) {
+      matrix[cell.row][cell.column] = MASK_PREDICATES[mask](cell.row, cell.column) ? cell.bit ^ 1 : cell.bit;
+    }
+    applyFormatInformation(matrix, mask);
+    applyVersionInformation(matrix, version);
+    const penalty = scorePenalty(matrix);
+    if (!best || penalty < best.penalty) {
+      best = { matrix, penalty };
+    }
+  }
+  return {
+    size,
+    version,
+    modules: best.matrix.map((row) => row.map((value) => value === 1))
+  };
+}
+function renderQrCodeSvg(text, options) {
+  const { size, modules } = encodeQrCode(text);
+  const margin = 2;
+  const total = size + margin * 2;
+  const path2 = [];
+  for (let row = 0; row < size; row += 1) {
+    for (let column = 0; column < size; column += 1) {
+      if (modules[row][column]) {
+        path2.push(`M${column + margin} ${row + margin}h1v1h-1z`);
+      }
+    }
+  }
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${total} ${total}" shape-rendering="crispEdges">`,
+    `<rect width="${total}" height="${total}" fill="#ffffff"/>`,
+    `<path d="${path2.join("")}" fill="#000000"/>`,
+    "</svg>"
+  ].join("");
+}
+const indexHtml = `<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0a0a0f" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Relay" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Relay Remote</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div class="ambient" aria-hidden="true"></div>
+
+    <!-- Shown until the access code is accepted. -->
+    <section id="gate" class="gate" hidden>
+      <div class="gate-card">
+        <div class="brand-mark" aria-hidden="true"><span></span></div>
+        <h1>Relay</h1>
+        <p>Enter the access code from the desktop app's <strong>Phone</strong> tab.</p>
+        <form id="gate-form" autocomplete="off">
+          <input
+            id="gate-input"
+            inputmode="latin"
+            autocapitalize="characters"
+            spellcheck="false"
+            placeholder="ACCESS CODE"
+            aria-label="Access code"
+          />
+          <button class="primary" type="submit">Unlock</button>
+        </form>
+        <p id="gate-error" class="gate-error" role="alert"></p>
+      </div>
+    </section>
+
+    <div id="app" class="app" hidden>
+      <header class="topbar">
+        <div class="identity">
+          <span id="status-dot" class="dot" aria-hidden="true"></span>
+          <div class="identity-copy">
+            <strong id="device-name">No TV connected</strong>
+            <small id="device-detail">Waiting for the desktop app</small>
+          </div>
+        </div>
+        <button id="power" class="icon-button danger" type="button" aria-label="Power">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3v9" />
+            <path d="M6.5 7a8 8 0 1 0 11 0" />
+          </svg>
+        </button>
+      </header>
+
+      <main class="panes">
+        <section id="pane-remote" class="pane is-active">
+          <div class="pad-stage">
+            <div class="dpad" role="group" aria-label="Directional pad">
+              <button class="dpad-dir up" data-key="up" aria-label="Up"><i></i></button>
+              <button class="dpad-dir right" data-key="right" aria-label="Right"><i></i></button>
+              <button class="dpad-dir down" data-key="down" aria-label="Down"><i></i></button>
+              <button class="dpad-dir left" data-key="left" aria-label="Left"><i></i></button>
+              <button class="dpad-ok" data-key="select" aria-label="Select">OK</button>
+            </div>
+
+            <div class="rocker" role="group" aria-label="Volume">
+              <button data-key="volumeUp" aria-label="Volume up">+</button>
+              <span class="rocker-label">VOL</span>
+              <button data-key="volumeDown" aria-label="Volume down">&minus;</button>
+            </div>
+          </div>
+
+          <div class="control-rows">
+            <div class="row three">
+              <button class="tile" data-key="back">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5 3 12l7 7" /><path d="M3 12h13a5 5 0 0 1 0 10h-3" /></svg>
+                <span>Back</span>
+              </button>
+              <button class="tile" data-key="home">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 11 9-8 9 8" /><path d="M6 10v10h12V10" /></svg>
+                <span>Home</span>
+              </button>
+              <button class="tile" data-key="menu">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16" /><path d="M4 12h16" /><path d="M4 17h16" /></svg>
+                <span>Menu</span>
+              </button>
+            </div>
+
+            <div class="row five transport">
+              <button class="tile ghost" data-key="previous" aria-label="Previous">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14L8 12z" /><path d="M6 5v14" /></svg>
+              </button>
+              <button class="tile ghost" data-key="rewind" aria-label="Rewind">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5v14L2 12z" /><path d="M22 5v14l-9-7z" /></svg>
+              </button>
+              <button class="tile accent" data-key="playPause" aria-label="Play or pause">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14" /><path d="M16 5v14" /></svg>
+              </button>
+              <button class="tile ghost" data-key="fastForward" aria-label="Fast forward">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 5v14l9-7z" /><path d="M2 5v14l9-7z" /></svg>
+              </button>
+              <button class="tile ghost" data-key="next" aria-label="Next">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14l10-7z" /><path d="M18 5v14" /></svg>
+              </button>
+            </div>
+
+            <div class="row three">
+              <button class="tile" data-key="mute">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z" /><path d="m16 9 5 6" /><path d="m21 9-5 6" /></svg>
+                <span>Mute</span>
+              </button>
+              <button class="tile" data-key="appSwitch">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4z" /><path d="M13 4h7v7h-7z" /><path d="M4 13h7v7H4z" /><path d="M13 13h7v7h-7z" /></svg>
+                <span>Recents</span>
+              </button>
+              <button class="tile" id="wake">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3" /><path d="M12 18v3" /><path d="M5 12H2" /><path d="M22 12h-3" /><circle cx="12" cy="12" r="4" /></svg>
+                <span>Wake</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section id="pane-apps" class="pane">
+          <div class="pane-head">
+            <input id="app-search" type="search" placeholder="Search apps" aria-label="Search apps" />
+            <button id="app-refresh" class="icon-button" type="button" aria-label="Refresh apps">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.9 5" /><path d="M20 4v7h-7" /></svg>
+            </button>
+          </div>
+          <div id="app-grid" class="app-grid"></div>
+          <p id="app-empty" class="empty"></p>
+        </section>
+
+        <section id="pane-type" class="pane">
+          <div class="type-card">
+            <label for="type-input">Send text to the TV</label>
+            <textarea
+              id="type-input"
+              rows="3"
+              placeholder="Search terms, passwords, anything…"
+              autocapitalize="sentences"
+            ></textarea>
+            <div class="type-actions">
+              <button id="type-send" class="primary" type="button">Send text</button>
+              <button id="type-clear" class="secondary" type="button">Clear</button>
+            </div>
+          </div>
+          <div class="row three">
+            <button class="tile" data-key="enter"><span>Enter</span></button>
+            <button class="tile" data-key="delete"><span>Delete</span></button>
+            <button class="tile" data-key="sleep"><span>Sleep</span></button>
+          </div>
+          <div class="type-hint">
+            <strong>Typing needs ADB.</strong>
+            <span>The desktop app relays text over ADB even when native remote is active.</span>
+          </div>
+        </section>
+      </main>
+
+      <nav class="tabbar" role="tablist">
+        <button class="tab is-active" data-pane="remote" role="tab" aria-selected="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="4" /><circle cx="12" cy="8" r="1.6" /><path d="M10 14h4" /><path d="M10 17.5h4" /></svg>
+          <span>Remote</span>
+        </button>
+        <button class="tab" data-pane="apps" role="tab" aria-selected="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></svg>
+          <span>Apps</span>
+        </button>
+        <button class="tab" data-pane="type" role="tab" aria-selected="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="3" /><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8" /></svg>
+          <span>Type</span>
+        </button>
+      </nav>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    </div>
+
+    <script src="/app.js"><\/script>
+  </body>
+</html>
+`;
+const appCss = '/* Relay phone remote — dark-first, thumb-first, one screen deep. */\n\n:root {\n  color-scheme: dark;\n  --bg: #08080d;\n  --surface: rgba(255, 255, 255, 0.045);\n  --surface-strong: rgba(255, 255, 255, 0.08);\n  --line: rgba(255, 255, 255, 0.09);\n  --line-strong: rgba(255, 255, 255, 0.16);\n  --ink: #f4f4f8;\n  --muted: #9295a8;\n  --accent: #7c5cff;\n  --accent-soft: rgba(124, 92, 255, 0.18);\n  --teal: #00d8c4;\n  --positive: #34d399;\n  --warn: #fbbf24;\n  --danger: #fb7185;\n  --radius: 20px;\n  --tap: cubic-bezier(0.2, 0.9, 0.3, 1);\n}\n\n* {\n  box-sizing: border-box;\n  -webkit-tap-highlight-color: transparent;\n}\n\nhtml,\nbody {\n  height: 100%;\n  margin: 0;\n  overscroll-behavior: none;\n}\n\nbody {\n  background: var(--bg);\n  color: var(--ink);\n  font: 400 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;\n  -webkit-font-smoothing: antialiased;\n  user-select: none;\n  -webkit-user-select: none;\n  touch-action: manipulation;\n}\n\n.ambient {\n  position: fixed;\n  inset: 0;\n  pointer-events: none;\n  background:\n    radial-gradient(70% 45% at 50% -8%, rgba(124, 92, 255, 0.3), transparent 70%),\n    radial-gradient(55% 40% at 105% 105%, rgba(0, 216, 196, 0.16), transparent 70%);\n  z-index: 0;\n}\n\nbutton {\n  font: inherit;\n  color: inherit;\n  border: 0;\n  background: none;\n  cursor: pointer;\n}\n\ninput,\ntextarea {\n  font: inherit;\n  color: inherit;\n  width: 100%;\n  border: 1px solid var(--line);\n  border-radius: 14px;\n  padding: 0.85rem 1rem;\n  background: rgba(0, 0, 0, 0.35);\n  user-select: text;\n  -webkit-user-select: text;\n}\n\ninput:focus,\ntextarea:focus {\n  outline: 2px solid var(--accent);\n  outline-offset: 1px;\n}\n\n/* ---------- access gate ---------- */\n\n.gate {\n  position: relative;\n  z-index: 1;\n  display: grid;\n  place-items: center;\n  min-height: 100dvh;\n  padding: 1.5rem;\n}\n\n.gate[hidden],\n.app[hidden] {\n  display: none;\n}\n\n.gate-card {\n  width: min(24rem, 100%);\n  padding: 2rem 1.6rem;\n  border: 1px solid var(--line);\n  border-radius: 26px;\n  background: rgba(16, 16, 24, 0.82);\n  backdrop-filter: blur(20px);\n  text-align: center;\n}\n\n.gate-card h1 {\n  margin: 1rem 0 0.4rem;\n  font-size: 1.7rem;\n  letter-spacing: -0.02em;\n}\n\n.gate-card p {\n  margin: 0 0 1.25rem;\n  color: var(--muted);\n  font-size: 0.92rem;\n}\n\n.gate-card form {\n  display: grid;\n  gap: 0.65rem;\n}\n\n#gate-input {\n  text-align: center;\n  letter-spacing: 0.35em;\n  text-transform: uppercase;\n  font-size: 1.1rem;\n  font-weight: 600;\n}\n\n.gate-error {\n  margin: 0.9rem 0 0;\n  min-height: 1.2em;\n  color: var(--danger);\n  font-size: 0.85rem;\n}\n\n.brand-mark {\n  display: grid;\n  place-items: center;\n  width: 54px;\n  height: 54px;\n  margin: 0 auto;\n  border-radius: 17px;\n  background: linear-gradient(150deg, var(--accent), var(--teal));\n  box-shadow: 0 12px 34px rgba(124, 92, 255, 0.4);\n}\n\n.brand-mark span {\n  width: 20px;\n  height: 14px;\n  border: 2.5px solid rgba(255, 255, 255, 0.95);\n  border-radius: 4px;\n}\n\n.primary,\n.secondary {\n  min-height: 3rem;\n  padding: 0 1.1rem;\n  border-radius: 14px;\n  font-weight: 600;\n  transition: transform 0.12s var(--tap), filter 0.12s var(--tap);\n}\n\n.primary {\n  background: linear-gradient(150deg, var(--accent), #5b3fe0);\n  color: #fff;\n  box-shadow: 0 10px 24px rgba(124, 92, 255, 0.32);\n}\n\n.secondary {\n  border: 1px solid var(--line-strong);\n  background: var(--surface);\n}\n\n.primary:active,\n.secondary:active {\n  transform: scale(0.97);\n  filter: brightness(1.15);\n}\n\nbutton:disabled {\n  opacity: 0.45;\n  pointer-events: none;\n}\n\n/* ---------- shell ---------- */\n\n.app {\n  position: relative;\n  z-index: 1;\n  display: grid;\n  grid-template-rows: auto minmax(0, 1fr) auto;\n  height: 100dvh;\n  padding-top: env(safe-area-inset-top);\n}\n\n.topbar {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 1rem;\n  padding: 0.85rem 1.1rem;\n  border-bottom: 1px solid var(--line);\n}\n\n.identity {\n  display: flex;\n  align-items: center;\n  gap: 0.7rem;\n  min-width: 0;\n}\n\n.identity-copy {\n  display: grid;\n  min-width: 0;\n}\n\n.identity-copy strong {\n  font-size: 1rem;\n  letter-spacing: -0.01em;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.identity-copy small {\n  color: var(--muted);\n  font-size: 0.76rem;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.dot {\n  flex: none;\n  width: 10px;\n  height: 10px;\n  border-radius: 50%;\n  background: var(--muted);\n  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.06);\n}\n\n.dot.is-live {\n  background: var(--positive);\n  box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.16);\n  animation: pulse 2.4s ease-in-out infinite;\n}\n\n.dot.is-busy {\n  background: var(--warn);\n  box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.16);\n}\n\n.dot.is-down {\n  background: var(--danger);\n  box-shadow: 0 0 0 4px rgba(251, 113, 133, 0.16);\n}\n\n@keyframes pulse {\n  50% {\n    opacity: 0.55;\n  }\n}\n\n.icon-button {\n  display: grid;\n  place-items: center;\n  flex: none;\n  width: 44px;\n  height: 44px;\n  border: 1px solid var(--line);\n  border-radius: 14px;\n  background: var(--surface);\n  transition: transform 0.12s var(--tap), background 0.12s var(--tap);\n}\n\n.icon-button:active {\n  transform: scale(0.93);\n  background: var(--surface-strong);\n}\n\n.icon-button.danger {\n  color: var(--danger);\n  border-color: rgba(251, 113, 133, 0.28);\n  background: rgba(251, 113, 133, 0.1);\n}\n\nsvg {\n  width: 22px;\n  height: 22px;\n  fill: none;\n  stroke: currentColor;\n  stroke-width: 1.8;\n  stroke-linecap: round;\n  stroke-linejoin: round;\n}\n\n/* ---------- panes ---------- */\n\n.panes {\n  position: relative;\n  min-height: 0;\n  overflow: hidden;\n}\n\n.pane {\n  display: none;\n  height: 100%;\n  padding: 1.1rem 1.1rem 0.5rem;\n  overflow-y: auto;\n  -webkit-overflow-scrolling: touch;\n}\n\n.pane.is-active {\n  display: block;\n  animation: rise 0.22s var(--tap);\n}\n\n@keyframes rise {\n  from {\n    opacity: 0;\n    transform: translateY(8px);\n  }\n}\n\n/* ---------- d-pad ---------- */\n\n#pane-remote.is-active {\n  display: flex;\n  flex-direction: column;\n  gap: 0.6rem;\n  padding-bottom: 1rem;\n}\n\n.control-rows {\n  display: grid;\n  gap: 0.6rem;\n}\n\n.pad-stage {\n  display: flex;\n  flex: 1 1 auto;\n  min-height: 0;\n  align-items: center;\n  justify-content: center;\n  gap: 1rem;\n}\n\n.dpad {\n  position: relative;\n  flex: none;\n  width: min(62vw, 17rem);\n  max-width: 100%;\n  aspect-ratio: 1;\n  border-radius: 50%;\n  background:\n    radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.1), transparent 60%),\n    rgba(255, 255, 255, 0.05);\n  border: 1px solid var(--line);\n  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 24px 48px rgba(0, 0, 0, 0.55);\n}\n\n.dpad-dir {\n  position: absolute;\n  inset: 0;\n  display: flex;\n  border-radius: 50%;\n  transition: background 0.1s var(--tap);\n}\n\n/* Each direction is a quadrant wedge of the same circle. */\n.dpad-dir.up {\n  clip-path: polygon(50% 50%, 0 0, 100% 0);\n  align-items: flex-start;\n  justify-content: center;\n  padding-top: 9%;\n}\n\n.dpad-dir.right {\n  clip-path: polygon(50% 50%, 100% 0, 100% 100%);\n  align-items: center;\n  justify-content: flex-end;\n  padding-right: 9%;\n}\n\n.dpad-dir.down {\n  clip-path: polygon(50% 50%, 100% 100%, 0 100%);\n  align-items: flex-end;\n  justify-content: center;\n  padding-bottom: 9%;\n}\n\n.dpad-dir.left {\n  clip-path: polygon(50% 50%, 0 100%, 0 0);\n  align-items: center;\n  justify-content: flex-start;\n  padding-left: 9%;\n}\n\n.dpad-dir:active {\n  background: var(--accent-soft);\n}\n\n.dpad-dir i {\n  display: block;\n  width: 13px;\n  height: 13px;\n  border-style: solid;\n  border-color: rgba(255, 255, 255, 0.72);\n  border-width: 2.5px 2.5px 0 0;\n}\n\n.dpad-dir.up i {\n  transform: rotate(-45deg) translate(-2px, 2px);\n}\n\n.dpad-dir.right i {\n  transform: rotate(45deg);\n}\n\n.dpad-dir.down i {\n  transform: rotate(135deg) translate(-2px, 2px);\n}\n\n.dpad-dir.left i {\n  transform: rotate(-135deg);\n}\n\n.dpad-ok {\n  position: absolute;\n  inset: 27%;\n  border-radius: 50%;\n  border: 1px solid var(--line-strong);\n  background: linear-gradient(155deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04));\n  font-size: 0.95rem;\n  font-weight: 700;\n  letter-spacing: 0.06em;\n  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);\n  transition: transform 0.12s var(--tap), background 0.12s var(--tap);\n}\n\n.dpad-ok:active {\n  transform: scale(0.94);\n  background: linear-gradient(155deg, var(--accent), #5b3fe0);\n  border-color: transparent;\n}\n\n.rocker {\n  display: grid;\n  grid-template-rows: 1fr auto 1fr;\n  flex: none;\n  gap: 0.2rem;\n  justify-items: center;\n  align-items: center;\n  width: 3.6rem;\n  height: min(46vw, 12.5rem);\n  padding: 0.4rem 0;\n  border: 1px solid var(--line);\n  border-radius: 2rem;\n  background: var(--surface);\n}\n\n.rocker button {\n  width: 100%;\n  height: 100%;\n  border-radius: 1.7rem;\n  font-size: 1.5rem;\n  font-weight: 500;\n  transition: background 0.12s var(--tap);\n}\n\n.rocker button:active {\n  background: var(--accent-soft);\n}\n\n.rocker-label {\n  color: var(--muted);\n  font-size: 0.6rem;\n  font-weight: 700;\n  letter-spacing: 0.16em;\n}\n\n/* ---------- button rows ---------- */\n\n.row {\n  display: grid;\n  gap: 0.6rem;\n}\n\n.row.three {\n  grid-template-columns: repeat(3, 1fr);\n}\n\n.row.five {\n  grid-template-columns: repeat(5, 1fr);\n}\n\n.tile {\n  display: grid;\n  gap: 0.3rem;\n  place-items: center;\n  min-height: 4rem;\n  padding: 0.6rem 0.3rem;\n  border: 1px solid var(--line);\n  border-radius: 18px;\n  background: var(--surface);\n  font-size: 0.76rem;\n  font-weight: 500;\n  color: var(--ink);\n  transition: transform 0.12s var(--tap), background 0.12s var(--tap);\n}\n\n.tile:active {\n  transform: scale(0.95);\n  background: var(--surface-strong);\n}\n\n.tile.ghost {\n  min-height: 3.4rem;\n  background: transparent;\n}\n\n.tile.accent {\n  background: linear-gradient(150deg, var(--accent), #5b3fe0);\n  border-color: transparent;\n  box-shadow: 0 10px 24px rgba(124, 92, 255, 0.3);\n}\n\n.transport {\n  align-items: center;\n}\n\n/* ---------- apps ---------- */\n\n.pane-head {\n  display: flex;\n  gap: 0.6rem;\n  margin-bottom: 0.9rem;\n}\n\n#pane-type .row {\n  margin-bottom: 0.9rem;\n}\n\n.app-grid {\n  display: grid;\n  grid-template-columns: repeat(auto-fill, minmax(5.1rem, 1fr));\n  gap: 0.75rem;\n  padding-bottom: 0.5rem;\n}\n\n.app-card {\n  display: grid;\n  gap: 0.45rem;\n  justify-items: center;\n  padding: 0.75rem 0.3rem;\n  border: 1px solid var(--line);\n  border-radius: 18px;\n  background: var(--surface);\n  transition: transform 0.12s var(--tap), background 0.12s var(--tap);\n}\n\n.app-card:active {\n  transform: scale(0.94);\n  background: var(--surface-strong);\n}\n\n.app-card.is-busy {\n  border-color: var(--accent);\n}\n\n.app-card img,\n.app-card .fallback {\n  width: 44px;\n  height: 44px;\n  border-radius: 12px;\n  object-fit: cover;\n}\n\n.app-card .fallback {\n  display: grid;\n  place-items: center;\n  background: linear-gradient(\n    150deg,\n    hsl(var(--hue, 260) 72% 58%),\n    hsl(calc(var(--hue, 260) + 40) 68% 44%)\n  );\n  color: #fff;\n  font-size: 1rem;\n  font-weight: 700;\n  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);\n}\n\n.app-card span {\n  width: 100%;\n  font-size: 0.7rem;\n  line-height: 1.25;\n  text-align: center;\n  overflow: hidden;\n  display: -webkit-box;\n  -webkit-line-clamp: 2;\n  -webkit-box-orient: vertical;\n}\n\n.app-card .pin {\n  position: absolute;\n  inset-block-start: 0.35rem;\n  inset-inline-end: 0.45rem;\n  color: var(--warn);\n  font-size: 0.7rem;\n}\n\n.app-card {\n  position: relative;\n}\n\n.empty {\n  margin: 2.5rem 0;\n  color: var(--muted);\n  font-size: 0.9rem;\n  text-align: center;\n}\n\n/* ---------- typing ---------- */\n\n.type-card {\n  display: grid;\n  gap: 0.7rem;\n  margin-bottom: 0.9rem;\n  padding: 1rem;\n  border: 1px solid var(--line);\n  border-radius: var(--radius);\n  background: var(--surface);\n}\n\n.type-card label {\n  color: var(--muted);\n  font-size: 0.78rem;\n  font-weight: 600;\n  letter-spacing: 0.04em;\n  text-transform: uppercase;\n}\n\n.type-actions {\n  display: grid;\n  grid-template-columns: 2fr 1fr;\n  gap: 0.6rem;\n}\n\n.type-hint {\n  display: grid;\n  gap: 0.2rem;\n  padding: 0.85rem 1rem;\n  border: 1px solid var(--line);\n  border-radius: 16px;\n  background: rgba(124, 92, 255, 0.08);\n  font-size: 0.8rem;\n}\n\n.type-hint span {\n  color: var(--muted);\n}\n\n/* ---------- tab bar ---------- */\n\n.tabbar {\n  display: grid;\n  grid-template-columns: repeat(3, 1fr);\n  gap: 0.25rem;\n  padding: 0.5rem 0.75rem calc(0.5rem + env(safe-area-inset-bottom));\n  border-top: 1px solid var(--line);\n  background: rgba(10, 10, 16, 0.9);\n  backdrop-filter: blur(18px);\n}\n\n.tab {\n  display: grid;\n  gap: 0.2rem;\n  place-items: center;\n  padding: 0.5rem 0;\n  border-radius: 14px;\n  color: var(--muted);\n  font-size: 0.68rem;\n  font-weight: 600;\n  transition: color 0.15s var(--tap), background 0.15s var(--tap);\n}\n\n.tab.is-active {\n  color: var(--ink);\n  background: var(--surface);\n}\n\n.tab.is-active svg {\n  stroke: var(--accent);\n}\n\n/* ---------- toast ---------- */\n\n.toast {\n  position: fixed;\n  left: 50%;\n  bottom: calc(5.6rem + env(safe-area-inset-bottom));\n  z-index: 5;\n  max-width: min(22rem, calc(100vw - 2rem));\n  padding: 0.7rem 1rem;\n  border: 1px solid var(--line-strong);\n  border-radius: 14px;\n  background: rgba(22, 22, 32, 0.96);\n  backdrop-filter: blur(14px);\n  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);\n  font-size: 0.85rem;\n  text-align: center;\n  opacity: 0;\n  transform: translate(-50%, 10px);\n  pointer-events: none;\n  transition: opacity 0.2s var(--tap), transform 0.2s var(--tap);\n}\n\n.toast.is-visible {\n  opacity: 1;\n  transform: translate(-50%, 0);\n}\n\n.toast.is-error {\n  border-color: rgba(251, 113, 133, 0.5);\n  color: #ffd9de;\n}\n\n/* Landscape phones: the pad and the button rows sit side by side. */\n@media (orientation: landscape) and (max-height: 30rem) {\n  #pane-remote.is-active {\n    flex-direction: row;\n    align-items: center;\n    gap: 1rem;\n  }\n\n  .pad-stage {\n    flex: 0 0 auto;\n  }\n\n  .control-rows {\n    flex: 1 1 auto;\n    min-width: 0;\n  }\n\n  .dpad {\n    width: min(34vw, 11.5rem);\n  }\n\n  .rocker {\n    height: min(30vw, 10rem);\n  }\n\n  .tile {\n    min-height: 3.2rem;\n  }\n\n  .tile.ghost {\n    min-height: 2.9rem;\n  }\n\n  .topbar {\n    padding-block: 0.5rem;\n  }\n}\n\n@media (min-width: 34rem) {\n  .pane {\n    max-width: 34rem;\n    margin: 0 auto;\n  }\n}\n\n@media (prefers-reduced-motion: reduce) {\n  * {\n    animation: none !important;\n    transition: none !important;\n  }\n}\n';
+const appJs = "/* Relay phone remote client. Plain ES2019 so older phone browsers can run it. */\n;(function () {\n  'use strict'\n\n  var TOKEN_KEY = 'relay.token'\n  var byId = function (id) {\n    return document.getElementById(id)\n  }\n\n  var state = { snapshot: null, appQuery: '', pane: 'remote', busyPackage: null }\n  var stream = null\n  var toastTimer = null\n\n  /* ---------------- token handling ---------------- */\n\n  function readTokenFromUrl() {\n    var match = /[?&]t=([^&#]+)/.exec(window.location.search || '')\n    return match ? decodeURIComponent(match[1]) : ''\n  }\n\n  function storedToken() {\n    try {\n      return window.localStorage.getItem(TOKEN_KEY) || ''\n    } catch (error) {\n      return ''\n    }\n  }\n\n  function saveToken(token) {\n    try {\n      window.localStorage.setItem(TOKEN_KEY, token)\n    } catch (error) {\n      /* Private browsing: the token still lives in memory for this session. */\n    }\n  }\n\n  var token = readTokenFromUrl() || storedToken()\n\n  if (readTokenFromUrl()) {\n    saveToken(token)\n    // Keep the code out of the address bar once it is stored.\n    window.history.replaceState({}, '', window.location.pathname)\n  }\n\n  /* ---------------- transport ---------------- */\n\n  function request(path, body) {\n    return fetch(path, {\n      method: body ? 'POST' : 'GET',\n      headers: body\n        ? { 'Content-Type': 'application/json', 'X-Relay-Token': token }\n        : { 'X-Relay-Token': token },\n      body: body ? JSON.stringify(body) : undefined\n    }).then(function (response) {\n      if (response.status === 401) {\n        showGate('That code was not accepted.')\n        throw new Error('unauthorized')\n      }\n\n      return response.json().then(function (payload) {\n        if (!response.ok) {\n          throw new Error(payload && payload.error ? payload.error : 'Request failed.')\n        }\n        return payload\n      })\n    })\n  }\n\n  function openStream() {\n    if (stream) {\n      stream.close()\n    }\n\n    stream = new EventSource('/api/events?t=' + encodeURIComponent(token))\n    stream.onmessage = function (event) {\n      applySnapshot(JSON.parse(event.data))\n    }\n    stream.onerror = function () {\n      setConnectionDot('is-down', 'Reconnecting to the desktop app…')\n    }\n  }\n\n  /* ---------------- gate ---------------- */\n\n  function showGate(message) {\n    byId('gate').hidden = false\n    byId('app').hidden = true\n    byId('gate-error').textContent = message || ''\n\n    if (stream) {\n      stream.close()\n      stream = null\n    }\n  }\n\n  function showApp() {\n    byId('gate').hidden = true\n    byId('app').hidden = false\n  }\n\n  byId('gate-form').addEventListener('submit', function (event) {\n    event.preventDefault()\n    var value = byId('gate-input').value.trim().toUpperCase()\n\n    if (!value) {\n      return\n    }\n\n    token = value\n    request('/api/snapshot')\n      .then(function (snapshot) {\n        saveToken(token)\n        showApp()\n        applySnapshot(snapshot)\n        openStream()\n      })\n      .catch(function () {\n        /* showGate already reported the failure. */\n      })\n  })\n\n  /* ---------------- rendering ---------------- */\n\n  function setConnectionDot(className, detail) {\n    byId('status-dot').className = 'dot ' + className\n    if (detail) {\n      byId('device-detail').textContent = detail\n    }\n  }\n\n  function applySnapshot(snapshot) {\n    state.snapshot = snapshot\n\n    var connection = snapshot.connectionState || {}\n    var device = snapshot.device\n    var connected = connection.status === 'connected'\n    var backend = snapshot.activeBackend === 'native' ? 'Native Remote' : 'ADB'\n\n    byId('device-name').textContent = device ? device.name : 'No TV connected'\n\n    if (connected) {\n      setConnectionDot('is-live', device.host + ' · ' + backend)\n    } else if (connection.status === 'connecting' || connection.status === 'pairing') {\n      setConnectionDot('is-busy', 'Connecting…')\n    } else {\n      setConnectionDot(\n        'is-down',\n        connection.message || 'Connect a TV from the desktop app first'\n      )\n    }\n\n    renderApps()\n  }\n\n  function initials(name) {\n    return name\n      .split(/\\s+/)\n      .filter(Boolean)\n      .slice(0, 2)\n      .map(function (part) {\n        return part.charAt(0).toUpperCase()\n      })\n      .join('')\n  }\n\n  /** Stable per-package hue so icon-less apps stay distinguishable. */\n  function hueFor(packageName) {\n    var hash = 0\n\n    for (var index = 0; index < packageName.length; index += 1) {\n      hash = (hash * 31 + packageName.charCodeAt(index)) >>> 0\n    }\n\n    return hash % 360\n  }\n\n  function visibleApps() {\n    var snapshot = state.snapshot\n    if (!snapshot) {\n      return []\n    }\n\n    var query = state.appQuery.trim().toLowerCase()\n    var apps = snapshot.apps.filter(function (app) {\n      if (!query) {\n        return true\n      }\n      return (\n        app.displayName.toLowerCase().indexOf(query) !== -1 ||\n        app.packageName.toLowerCase().indexOf(query) !== -1\n      )\n    })\n\n    var recents = snapshot.recentApps || []\n    return apps.sort(function (left, right) {\n      if (left.favorite !== right.favorite) {\n        return left.favorite ? -1 : 1\n      }\n\n      var leftRecent = recents.indexOf(left.packageName)\n      var rightRecent = recents.indexOf(right.packageName)\n\n      if (leftRecent !== rightRecent) {\n        return (leftRecent === -1 ? 99 : leftRecent) - (rightRecent === -1 ? 99 : rightRecent)\n      }\n\n      return left.displayName.localeCompare(right.displayName)\n    })\n  }\n\n  function renderApps() {\n    var grid = byId('app-grid')\n    var empty = byId('app-empty')\n    var apps = visibleApps()\n\n    grid.textContent = ''\n\n    if (apps.length === 0) {\n      var snapshot = state.snapshot\n      empty.textContent = !snapshot || !snapshot.device\n        ? 'Connect a TV from the desktop app to browse its apps.'\n        : state.appQuery\n          ? 'No apps match that search.'\n          : 'No apps cached yet. Tap refresh to build the list.'\n      return\n    }\n\n    empty.textContent = ''\n\n    apps.forEach(function (app) {\n      var card = document.createElement('button')\n      card.type = 'button'\n      card.className = 'app-card' + (state.busyPackage === app.packageName ? ' is-busy' : '')\n      card.setAttribute('data-package', app.packageName)\n\n      if (app.hasIcon) {\n        var img = document.createElement('img')\n        img.src = '/api/icon?package=' + encodeURIComponent(app.packageName) + '&t=' + encodeURIComponent(token)\n        img.alt = ''\n        img.loading = 'lazy'\n        card.appendChild(img)\n      } else {\n        var fallback = document.createElement('div')\n        fallback.className = 'fallback'\n        fallback.style.setProperty('--hue', String(hueFor(app.packageName)))\n        fallback.textContent = initials(app.displayName)\n        card.appendChild(fallback)\n      }\n\n      var label = document.createElement('span')\n      label.textContent = app.displayName\n      card.appendChild(label)\n\n      if (app.favorite) {\n        var pin = document.createElement('em')\n        pin.className = 'pin'\n        pin.textContent = '★'\n        card.appendChild(pin)\n      }\n\n      grid.appendChild(card)\n    })\n  }\n\n  function toast(message, isError) {\n    var element = byId('toast')\n    element.textContent = message\n    element.className = 'toast is-visible' + (isError ? ' is-error' : '')\n\n    window.clearTimeout(toastTimer)\n    toastTimer = window.setTimeout(function () {\n      element.className = 'toast'\n    }, isError ? 3200 : 1600)\n  }\n\n  /** The gate already took over for a 401, so that case stays silent. */\n  function reportError(error) {\n    if (error && error.message !== 'unauthorized') {\n      toast(error.message, true)\n    }\n  }\n\n  function buzz(duration) {\n    if (navigator.vibrate) {\n      navigator.vibrate(duration || 8)\n    }\n  }\n\n  /* ---------------- actions ---------------- */\n\n  function sendKey(command) {\n    buzz()\n    request('/api/key', { command: command })\n      .then(function (payload) {\n        var feedback = payload.feedback\n        if (feedback && feedback.status === 'blocked') {\n          toast(feedback.title, true)\n        }\n      })\n      .catch(reportError)\n  }\n\n  document.addEventListener('click', function (event) {\n    if (!event.target || !event.target.closest) {\n      return\n    }\n\n    var keyTarget = event.target.closest('[data-key]')\n\n    if (keyTarget) {\n      sendKey(keyTarget.getAttribute('data-key'))\n      return\n    }\n\n    var appTarget = event.target.closest('[data-package]')\n\n    if (appTarget) {\n      var packageName = appTarget.getAttribute('data-package')\n      buzz(12)\n      state.busyPackage = packageName\n      renderApps()\n      request('/api/launch', { packageName: packageName })\n        .then(function () {\n          toast('Launching…')\n        })\n        .catch(reportError)\n        .then(function () {\n          state.busyPackage = null\n          renderApps()\n        })\n      return\n    }\n\n    var tab = event.target.closest('[data-pane]')\n    if (tab) {\n      selectPane(tab.getAttribute('data-pane'))\n    }\n  })\n\n  byId('power').addEventListener('click', function () {\n    sendKey('power')\n  })\n\n  byId('wake').addEventListener('click', function (event) {\n    event.stopPropagation()\n    buzz(12)\n    request('/api/wake', {})\n      .then(function () {\n        toast('Wake sent')\n      })\n      .catch(reportError)\n  })\n\n  byId('app-refresh').addEventListener('click', function () {\n    buzz(12)\n    toast('Refreshing apps…')\n    request('/api/apps/refresh', {})\n      .then(function (snapshot) {\n        applySnapshot(snapshot)\n        toast('Apps updated')\n      })\n      .catch(reportError)\n  })\n\n  byId('app-search').addEventListener('input', function (event) {\n    state.appQuery = event.target.value\n    renderApps()\n  })\n\n  byId('type-send').addEventListener('click', function () {\n    var input = byId('type-input')\n    var text = input.value\n\n    if (!text) {\n      return\n    }\n\n    buzz(12)\n    request('/api/text', { text: text })\n      .then(function () {\n        input.value = ''\n        toast('Text sent')\n      })\n      .catch(reportError)\n  })\n\n  byId('type-clear').addEventListener('click', function () {\n    byId('type-input').value = ''\n  })\n\n  function selectPane(name) {\n    state.pane = name\n\n    Array.prototype.forEach.call(document.querySelectorAll('.pane'), function (pane) {\n      pane.classList.toggle('is-active', pane.id === 'pane-' + name)\n    })\n\n    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {\n      var active = tab.getAttribute('data-pane') === name\n      tab.classList.toggle('is-active', active)\n      tab.setAttribute('aria-selected', active ? 'true' : 'false')\n    })\n  }\n\n  /* Swipe on the d-pad so flicking works like a trackpad. */\n  ;(function enableSwipe() {\n    var pad = document.querySelector('.dpad')\n    var start = null\n\n    pad.addEventListener(\n      'touchstart',\n      function (event) {\n        start = { x: event.touches[0].clientX, y: event.touches[0].clientY, time: Date.now() }\n      },\n      { passive: true }\n    )\n\n    pad.addEventListener(\n      'touchend',\n      function (event) {\n        if (!start) {\n          return\n        }\n\n        var touch = event.changedTouches[0]\n        var deltaX = touch.clientX - start.x\n        var deltaY = touch.clientY - start.y\n        var distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY)\n        var elapsed = Date.now() - start.time\n        start = null\n\n        // Below the threshold this is a tap, and the click handler owns it.\n        if (distance < 42 || elapsed > 600) {\n          return\n        }\n\n        event.preventDefault()\n\n        if (Math.abs(deltaX) > Math.abs(deltaY)) {\n          sendKey(deltaX > 0 ? 'right' : 'left')\n        } else {\n          sendKey(deltaY > 0 ? 'down' : 'up')\n        }\n      },\n      { passive: false }\n    )\n  })()\n\n  /* Reconnect the event stream when the phone comes back from sleep. */\n  document.addEventListener('visibilitychange', function () {\n    if (document.visibilityState === 'visible' && !byId('app').hidden) {\n      request('/api/snapshot').then(applySnapshot).catch(function () {})\n      openStream()\n    }\n  })\n\n  /* ---------------- boot ---------------- */\n\n  if (!token) {\n    showGate('')\n  } else {\n    request('/api/snapshot')\n      .then(function (snapshot) {\n        showApp()\n        applySnapshot(snapshot)\n        openStream()\n      })\n      .catch(function () {\n        /* showGate already ran for a 401. */\n      })\n  }\n})()\n";
+const manifest = '{\n  "name": "Relay Remote",\n  "short_name": "Relay",\n  "description": "Control your Android TV from your phone over the local network.",\n  "start_url": "/",\n  "scope": "/",\n  "display": "standalone",\n  "orientation": "portrait",\n  "background_color": "#08080d",\n  "theme_color": "#08080d",\n  "icons": [\n    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }\n  ]\n}\n';
+const iconSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">\n  <defs>\n    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">\n      <stop offset="0" stop-color="#7c5cff"/>\n      <stop offset="1" stop-color="#00d8c4"/>\n    </linearGradient>\n  </defs>\n  <rect width="512" height="512" rx="112" fill="url(#g)"/>\n  <rect x="136" y="168" width="240" height="152" rx="26" fill="none" stroke="#fff" stroke-width="26"/>\n  <path d="M196 132l60 48 60-48" fill="none" stroke="#fff" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>\n  <circle cx="256" cy="372" r="18" fill="#fff"/>\n</svg>\n';
+const WEB_ASSETS = {
+  "/index.html": { body: indexHtml, contentType: "text/html; charset=utf-8" },
+  "/app.css": { body: appCss, contentType: "text/css; charset=utf-8" },
+  "/app.js": { body: appJs, contentType: "text/javascript; charset=utf-8" },
+  "/manifest.webmanifest": { body: manifest, contentType: "application/manifest+json" },
+  "/icon.svg": { body: iconSvg, contentType: "image/svg+xml" }
+};
+const MAX_BODY_BYTES = 64 * 1024;
+const HEARTBEAT_MS = 2e4;
+const ICON_CACHE_HEADER = "public, max-age=86400";
+function isPrivateAddress(address) {
+  return address.startsWith("192.168.") || address.startsWith("10.") || /^172\.(1[6-9]|2\d|3[01])\./.test(address);
+}
+function collectAddresses(port) {
+  const interfaces = os.networkInterfaces();
+  const addresses = [];
+  for (const [label, entries] of Object.entries(interfaces)) {
+    for (const entry of entries ?? []) {
+      if (entry.family !== "IPv4" || entry.internal) {
+        continue;
+      }
+      const isWireless = /^(en0|en1|wlan|wl)/i.test(label);
+      addresses.push({
+        label,
+        host: entry.address,
+        url: `http://${entry.address}:${port}/`,
+        rank: (isPrivateAddress(entry.address) ? 0 : 2) + (isWireless ? 0 : 1)
+      });
+    }
+  }
+  return addresses.sort((left, right) => left.rank - right.rank || left.host.localeCompare(right.host)).map(({ rank: _rank, ...address }) => address);
+}
+function tokensMatch(expected, received) {
+  const left = createHash("sha256").update(expected).digest();
+  const right = createHash("sha256").update(received).digest();
+  return timingSafeEqual(left, right);
+}
+function readBody(request) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    request.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        reject(new Error("Request body is too large."));
+        request.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    request.on("error", reject);
+  });
+}
+class WebRemoteServer extends EventEmitter {
+  constructor(options) {
+    super();
+    this.options = options;
+    this.settings = options.settings.getWebRemote();
+  }
+  server = null;
+  settings;
+  clients = /* @__PURE__ */ new Set();
+  heartbeat = null;
+  lastError;
+  running = false;
+  async init() {
+    this.options.deviceManager.on("connectionState", () => this.broadcastSnapshot());
+    this.options.deviceManager.on("devicesChanged", () => this.broadcastSnapshot());
+    if (this.settings.enabled) {
+      await this.start().catch((error) => {
+        this.lastError = error instanceof Error ? error.message : String(error);
+      });
+    }
+  }
+  getStatus() {
+    const addresses = this.running ? collectAddresses(this.settings.port) : [];
+    const primary = addresses[0] ?? null;
+    const primaryUrl = primary ? `${primary.url}?t=${this.settings.token}` : null;
+    return {
+      enabled: this.settings.enabled,
+      running: this.running,
+      port: this.settings.port,
+      token: this.settings.token,
+      addresses,
+      primaryUrl,
+      connectedClients: this.clients.size,
+      lastError: this.lastError,
+      qrSvg: primaryUrl ? renderQrCodeSvg(primaryUrl) : null
+    };
+  }
+  async update(input) {
+    const nextPort = input.port === void 0 ? this.settings.port : this.normalizePort(input.port);
+    const nextEnabled = input.enabled ?? this.settings.enabled;
+    const nextToken = input.rotateToken ? createWebRemoteToken() : this.settings.token;
+    const needsRestart = this.running && (nextPort !== this.settings.port || nextToken !== this.settings.token);
+    this.settings = { enabled: nextEnabled, port: nextPort, token: nextToken };
+    this.options.settings.setWebRemote(this.settings);
+    if (!nextEnabled) {
+      await this.stop();
+    } else if (needsRestart || !this.running) {
+      await this.stop();
+      await this.start().catch((error) => {
+        this.lastError = error instanceof Error ? error.message : String(error);
+      });
+    }
+    const status = this.getStatus();
+    this.emit("status", status);
+    return status;
+  }
+  dispose() {
+    void this.stop();
+  }
+  normalizePort(port) {
+    if (!Number.isFinite(port) || port < 1024 || port > 65535) {
+      return DEFAULT_WEB_REMOTE_PORT;
+    }
+    return Math.floor(port);
+  }
+  start() {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const server = http.createServer((request, response) => {
+        void this.handleRequest(request, response);
+      });
+      server.on("error", (error) => {
+        this.lastError = error.code === "EADDRINUSE" ? `Port ${this.settings.port} is already in use. Pick another port.` : error.message;
+        if (settled) {
+          this.emit("status", this.getStatus());
+          return;
+        }
+        settled = true;
+        this.running = false;
+        this.server = null;
+        this.emit("status", this.getStatus());
+        reject(error);
+      });
+      server.listen(this.settings.port, "0.0.0.0", () => {
+        settled = true;
+        this.server = server;
+        this.running = true;
+        this.lastError = void 0;
+        this.heartbeat = setInterval(() => {
+          for (const client of this.clients) {
+            client.write(": ping\n\n");
+          }
+        }, HEARTBEAT_MS);
+        this.emit("status", this.getStatus());
+        resolve();
+      });
+    });
+  }
+  async stop() {
+    if (this.heartbeat) {
+      clearInterval(this.heartbeat);
+      this.heartbeat = null;
+    }
+    for (const client of this.clients) {
+      client.end();
+    }
+    this.clients.clear();
+    const server = this.server;
+    if (!server) {
+      this.running = false;
+      return;
+    }
+    this.server = null;
+    this.running = false;
+    await new Promise((resolve) => {
+      server.close(() => resolve());
+      server.closeAllConnections?.();
+    });
+  }
+  authorize(request, url) {
+    const provided = request.headers["x-relay-token"] ?? url.searchParams.get("t") ?? "";
+    return provided.length > 0 && tokensMatch(this.settings.token, provided);
+  }
+  async handleRequest(request, response) {
+    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+    const path2 = url.pathname;
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("Referrer-Policy", "no-referrer");
+    const asset = WEB_ASSETS[path2 === "/" ? "/index.html" : path2];
+    if (asset) {
+      response.writeHead(200, {
+        "Content-Type": asset.contentType,
+        "Cache-Control": "no-cache"
+      });
+      response.end(asset.body);
+      return;
+    }
+    if (!path2.startsWith("/api/")) {
+      response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("Not found");
+      return;
+    }
+    if (!this.authorize(request, url)) {
+      response.writeHead(401, { "Content-Type": "application/json; charset=utf-8" });
+      response.end(JSON.stringify({ error: "Enter the access code shown in the desktop app." }));
+      return;
+    }
+    if (path2 === "/api/events") {
+      this.openEventStream(response);
+      return;
+    }
+    if (path2 === "/api/icon") {
+      this.serveIcon(url.searchParams.get("package") ?? "", response);
+      return;
+    }
+    try {
+      const result = await this.routeApi(path2, request, url);
+      response.writeHead(result.status, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store"
+      });
+      response.end(JSON.stringify(result.body));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Request failed.";
+      response.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
+      response.end(JSON.stringify({ error: message }));
+    }
+  }
+  async routeApi(path2, request, _url) {
+    if (request.method === "GET" && path2 === "/api/snapshot") {
+      return { status: 200, body: this.buildSnapshot() };
+    }
+    if (request.method !== "POST") {
+      return { status: 405, body: { error: "Method not allowed." } };
+    }
+    const raw = await readBody(request);
+    const payload = raw ? JSON.parse(raw) : {};
+    switch (path2) {
+      case "/api/key":
+        return this.withFeedback(
+          () => this.options.remoteController.sendCommand(String(payload.command))
+        );
+      case "/api/text":
+        return this.withFeedback(
+          () => this.options.remoteController.sendText(String(payload.text ?? ""))
+        );
+      case "/api/launch":
+        return this.withFeedback(
+          () => this.options.appController.launchPackage(String(payload.packageName))
+        );
+      case "/api/quick-action":
+        return this.withFeedback(
+          () => this.options.actionController.runQuickAction(String(payload.id))
+        );
+      case "/api/wake":
+        return this.withFeedback(() => this.options.deviceManager.wakeAndReconnect());
+      case "/api/apps/refresh": {
+        await this.options.appController.listApps(true);
+        this.broadcastSnapshot();
+        return { status: 200, body: this.buildSnapshot() };
+      }
+      case "/api/favorite": {
+        await this.options.appController.toggleFavorite(String(payload.packageName));
+        this.broadcastSnapshot();
+        return { status: 200, body: this.buildSnapshot() };
+      }
+      case "/api/connect": {
+        const state = await this.options.deviceManager.connectDevice({ id: String(payload.id) });
+        return { status: 200, body: { connectionState: state } };
+      }
+      case "/api/disconnect": {
+        const state = await this.options.deviceManager.disconnectActiveDevice();
+        return { status: 200, body: { connectionState: state } };
+      }
+      default:
+        return { status: 404, body: { error: "Unknown endpoint." } };
+    }
+  }
+  async withFeedback(run) {
+    try {
+      const feedback = await run();
+      return { status: 200, body: { feedback } };
+    } catch (error) {
+      return {
+        status: 409,
+        body: { error: error instanceof Error ? error.message : "Action failed." }
+      };
+    }
+  }
+  serveIcon(packageName, response) {
+    const apps = this.options.deviceManager.getActiveDevice()?.cachedApps?.apps ?? [];
+    const match = apps.find((app2) => app2.packageName === packageName);
+    const parsed = match?.iconDataUrl?.match(/^data:([^;]+);base64,(.+)$/);
+    if (!parsed) {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, {
+      "Content-Type": parsed[1],
+      "Cache-Control": ICON_CACHE_HEADER
+    });
+    response.end(Buffer.from(parsed[2], "base64"));
+  }
+  openEventStream(response) {
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive"
+    });
+    response.write("retry: 3000\n\n");
+    response.write(`data: ${JSON.stringify(this.buildSnapshot())}
+
+`);
+    this.clients.add(response);
+    this.emit("status", this.getStatus());
+    response.on("close", () => {
+      this.clients.delete(response);
+      this.emit("status", this.getStatus());
+    });
+  }
+  broadcastSnapshot() {
+    if (this.clients.size === 0) {
+      return;
+    }
+    const payload = `data: ${JSON.stringify(this.buildSnapshot())}
+
+`;
+    for (const client of this.clients) {
+      client.write(payload);
+    }
+  }
+  buildSnapshot() {
+    const { deviceManager: deviceManager2 } = this.options;
+    const activeDevice = deviceManager2.getActiveDevice();
+    const capabilities = deviceManager2.getCapabilities();
+    const connectionState = deviceManager2.getConnectionState();
+    const favorites = new Set(activeDevice?.favorites ?? []);
+    const apps = (activeDevice?.cachedApps?.apps ?? []).map((app2) => ({
+      packageName: app2.packageName,
+      displayName: app2.displayName,
+      category: app2.category,
+      hasIcon: Boolean(app2.iconDataUrl),
+      favorite: favorites.has(app2.packageName)
+    }));
+    return {
+      connectionState,
+      activeBackend: deviceManager2.getActiveBackend(),
+      device: activeDevice ? { id: activeDevice.id, name: activeDevice.name, host: activeDevice.host } : null,
+      devices: deviceManager2.listDevices().map((device) => ({
+        id: device.id,
+        name: device.name,
+        host: device.host
+      })),
+      capabilities,
+      apps,
+      recentApps: (activeDevice?.recentApps ?? []).map((entry) => entry.packageName),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+  }
+}
 let mainWindow = null;
 let deviceManager = null;
+let webRemoteServer = null;
 let bootstrapPromise = null;
 function resolvePreloadPath() {
   const candidates = [
@@ -2949,6 +3982,13 @@ async function bootstrap() {
   const actionController = new ActionController(deviceManager, remoteController, appController);
   const scrcpyController = new ScrcpyController(deviceManager, adbLocator);
   const sideloadController = new SideloadController(deviceManager, adbClient);
+  webRemoteServer = new WebRemoteServer({
+    settings: new ElectronSettingsStore(),
+    deviceManager,
+    remoteController,
+    appController,
+    actionController
+  });
   registerIpc({
     deviceManager,
     remoteController,
@@ -2956,12 +3996,16 @@ async function bootstrap() {
     actionController,
     scrcpyController,
     sideloadController,
+    webRemoteServer,
     adbLocator,
     adbClient,
     getMainWindow: () => mainWindow
   });
   await deviceManager.init().catch((error) => {
     console.error("Device manager init failed, continuing with empty runtime state.", error);
+  });
+  await webRemoteServer.init().catch((error) => {
+    console.error("Phone remote server failed to start.", error);
   });
   await createMainWindow();
 }
@@ -2990,6 +4034,7 @@ app.on("activate", () => {
 });
 app.on("window-all-closed", () => {
   deviceManager?.dispose();
+  webRemoteServer?.dispose();
   if (process.platform !== "darwin") {
     app.quit();
   }

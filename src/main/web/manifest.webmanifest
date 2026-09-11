@@ -1,0 +1,14 @@
+{
+  "name": "Relay Remote",
+  "short_name": "Relay",
+  "description": "Control your Android TV from your phone over the local network.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#08080d",
+  "theme_color": "#08080d",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

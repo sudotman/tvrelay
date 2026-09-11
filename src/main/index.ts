@@ -12,9 +12,12 @@ import { ActionController } from './services/actionController'
 import { NativeRemoteService } from './services/native/nativeRemoteService'
 import { ScrcpyController } from './services/scrcpyController'
 import { SideloadController } from './services/sideloadController'
+import { ElectronSettingsStore } from './services/settingsStore'
+import { WebRemoteServer } from './services/web/webRemoteServer'
 
 let mainWindow: BrowserWindow | null = null
 let deviceManager: DeviceManager | null = null
+let webRemoteServer: WebRemoteServer | null = null
 let bootstrapPromise: Promise<void> | null = null
 
 function resolvePreloadPath(): string {
@@ -87,6 +90,14 @@ async function bootstrap(): Promise<void> {
   const scrcpyController = new ScrcpyController(deviceManager, adbLocator)
   const sideloadController = new SideloadController(deviceManager, adbClient)
 
+  webRemoteServer = new WebRemoteServer({
+    settings: new ElectronSettingsStore(),
+    deviceManager,
+    remoteController,
+    appController,
+    actionController
+  })
+
   registerIpc({
     deviceManager,
     remoteController,
@@ -94,6 +105,7 @@ async function bootstrap(): Promise<void> {
     actionController,
     scrcpyController,
     sideloadController,
+    webRemoteServer,
     adbLocator,
     adbClient,
     getMainWindow: () => mainWindow
@@ -101,6 +113,10 @@ async function bootstrap(): Promise<void> {
 
   await deviceManager.init().catch((error) => {
     console.error('Device manager init failed, continuing with empty runtime state.', error)
+  })
+
+  await webRemoteServer.init().catch((error) => {
+    console.error('Phone remote server failed to start.', error)
   })
 
   await createMainWindow()
@@ -136,6 +152,7 @@ app.on('activate', () => {
 
 app.on('window-all-closed', () => {
   deviceManager?.dispose()
+  webRemoteServer?.dispose()
 
   if (process.platform !== 'darwin') {
     app.quit()

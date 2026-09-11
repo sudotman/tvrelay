@@ -328,3 +328,29 @@ export interface SelectedApkFile {
 export interface InstallApkInput {
   id: string
 }
+
+export interface WebRemoteAddress {
+  /** Human readable network interface name, e.g. "Wi-Fi". */
+  label: string
+  host: string
+  url: string
+}
+
+export interface WebRemoteStatus {
+  enabled: boolean
+  running: boolean
+  port: number
+  token: string
+  addresses: WebRemoteAddress[]
+  primaryUrl: string | null
+  connectedClients: number
+  lastError?: string
+  /** Inline SVG for the primary URL, ready to drop into the desktop UI. */
+  qrSvg: string | null
+}
+
+export interface UpdateWebRemoteInput {
+  enabled?: boolean
+  port?: number
+  rotateToken?: boolean
+}

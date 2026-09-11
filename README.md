@@ -7,6 +7,15 @@ the app will work with most android tvs/smart tvs.
 
 [![Demo screenshot of TV Relay desktop application showing the Android TV setup and control interface with dark theme. The left sidebar displays setup options, device roster showing a connected bedroom TV at 192.168.29.40, remote controls for playback and typing, and apps launcher. The main content area shows the configuration panel for connecting with ADB, displaying fields for ADB pair port (37099), connect port (5555), and pair code (654321), along with diagnostics showing both ADB and Native Remote as Ready. The interface has a professional dark blue color scheme with blue accent buttons and status indicators.](https://github.com/sudotman/sudotman/blob/main/demos/tvrelay/ss1.png?raw=true)](https://github.com/sudotman/sudotman/blob/main/demos/tvrelay/ss1.png?raw=true)
 
+## phone remote
+
+the desktop app can serve a touch remote over your local network. turn it on in the **Phone** tab, then scan the QR code (or open the printed URL and type the access code) on any phone or tablet on the same Wi-Fi.
+
+- the phone talks only to the desktop app, never to the TV directly - every command still goes through the same ADB/native path
+- off by default, and bound to the LAN only while you have it on
+- protected by a rotating access code; "New code" signs every phone out
+- installable to the home screen as a PWA, with a d-pad you can tap or swipe, an app grid, and remote typing
+
 ## adb vs native
 
 ADB is the default and most broadly useful path. It powers the remote, typing, installed-app discovery and launch, APK sideloading, and screen mirroring.
@@ -44,14 +53,29 @@ src/
       deviceManager.ts
       deviceStore.ts
       remoteController.ts
+      scrcpyController.ts
+      settingsStore.ts
+      sideloadController.ts
+      web/
+        assets.ts
+        qrcode.ts
+        webRemoteServer.ts
+    web/
+      index.html
+      app.css
+      app.js
   preload/
     index.ts
   renderer/
     index.html
     src/
       App.tsx
-      main.tsx
+      useRelayState.ts
+      relayContext.ts
+      viewModel.ts
       styles.css
+      components/
+      views/
   shared/
     ipc.ts
     types.ts
@@ -69,8 +93,16 @@ src/
   Sends remote actions through the active backend.
 - `src/main/services/appController.ts`
   Lists and launches installed apps through ADB access.
-- `src/renderer/src/App.tsx`
-  Main desktop UI and setup flow.
+- `src/main/services/web/webRemoteServer.ts`
+  Serves the phone remote over the LAN: static UI, token-guarded JSON API, and a server-sent-event stream for live state.
+- `src/main/services/web/qrcode.ts`
+  Dependency-free QR encoder used to render the pairing code.
+- `src/main/web/`
+  The phone UI itself. It is inlined into the main bundle at build time, so packaged builds do not ship a static directory.
+- `src/renderer/src/useRelayState.ts`
+  Every piece of renderer state plus the IPC calls that change it. Views read it through `relayContext`.
+- `src/renderer/src/views/`
+  The four desktop views: Remote, Apps, Setup, and Phone.
 
 ## development
 
@@ -161,6 +193,8 @@ current tests cover:
 - ADB parser behavior
 - mocked ADB integration paths
 - reconnect and device-manager logic
+- QR encoding, checked against reference symbols
+- the phone-remote HTTP server: auth, routing, icon serving, token rotation, and shutdown
 
 real-device manual testing is still important for:
 
@@ -168,6 +202,7 @@ real-device manual testing is still important for:
 - native remote pairing
 - connection recovery
 - device-specific remote quirks
+- the phone remote on an actual phone, in portrait and landscape
 
 ## contributing
 all contributions are welcome. commit, PR and we shall merge!

@@ -16,11 +16,12 @@ Build a practical desktop remote for Android TV that is easy to start, reliable 
 
 ## Current UX Direction
 
-- One obvious status area at the top.
-- One clear setup flow.
-- ADB setup first.
-- Native remote clearly labeled as optional / less reliable.
+- A left rail carries the four views: Remote, Apps, Setup, Phone.
+- The top bar always answers "which TV, which backend, connected or not" through the device chip.
+- One clear setup flow. ADB setup first.
+- Native remote stays collapsed and clearly labeled as optional / less reliable.
 - Remote and apps views should be unavailable or clearly empty when no TV is connected.
+- The remote view is the hero: the handset panel owns the d-pad and keys, and support cards sit beside it.
 
 ## Architecture Rules
 
@@ -29,6 +30,9 @@ Build a practical desktop remote for Android TV that is easy to start, reliable 
 - Renderer communicates through typed IPC only.
 - Shared contracts live in `src/shared`.
 - Device capability decisions should flow from `DeviceManager`.
+- Renderer state lives in `useRelayState`; views read it through `RelayContext` instead of prop drilling.
+- Presentation helpers that are not React live in `viewModel.ts` so they stay unit-testable.
+- The phone remote is a client of the same controllers the desktop UI uses. It must never reach the TV directly.
 
 ## Connection Strategy
 
@@ -57,10 +61,16 @@ Build a practical desktop remote for Android TV that is easy to start, reliable 
   Maps remote commands to the active backend.
 - `src/main/services/appController.ts`
   App discovery and launch through ADB.
+- `src/main/services/web/webRemoteServer.ts`
+  LAN HTTP server for the phone remote: static assets, token-guarded API, SSE state stream.
+- `src/main/web/`
+  The phone UI. Inlined into the main bundle through `?raw` imports in `services/web/assets.ts`.
 - `src/renderer/src/App.tsx`
-  Main UI flow.
+  Shell, global keyboard handling, and view switching.
+- `src/renderer/src/useRelayState.ts`
+  All renderer state and IPC calls.
 - `src/renderer/src/styles.css`
-  Visual hierarchy and layout.
+  Design tokens, then components in the order the shell renders them.
 
 ## Validation Checklist
 
@@ -95,6 +105,14 @@ At minimum, `typecheck` and `build` should pass for UI or service changes.
 - Preserve a clean cancel path for pairing.
 - Do not block ADB usage behind native setup.
 - Treat “TV did not show a code” as a first-class failure case.
+
+## When Touching the Phone Remote
+
+- It stays off by default. Turning it on is an explicit, visible choice.
+- Never widen the bind beyond the LAN, and never drop the token check on `/api/*`.
+- Rotating the token must sign every phone out.
+- Keep the phone UI dependency-free and inlined; packaged builds must not need a static directory on disk.
+- Changing the phone UI means re-running the phone-side checks by hand on a real phone, not just in a desktop browser.
 
 ## When Touching Setup UX
 

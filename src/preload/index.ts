@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC_CHANNELS, type TvRemoteApi } from '@shared/ipc'
-import type { ConnectionState, SavedDevice } from '@shared/types'
+import type { ConnectionState, SavedDevice, WebRemoteStatus } from '@shared/types'
 
 const api: TvRemoteApi = {
   listDevices: () => ipcRenderer.invoke(IPC_CHANNELS.devicesList),
@@ -29,6 +29,8 @@ const api: TvRemoteApi = {
   launchScrcpy: (input) => ipcRenderer.invoke(IPC_CHANNELS.scrcpyLaunch, input),
   chooseApkFile: () => ipcRenderer.invoke(IPC_CHANNELS.sideloadChooseApk),
   installApk: (input) => ipcRenderer.invoke(IPC_CHANNELS.sideloadInstallApk, input),
+  getWebRemoteStatus: () => ipcRenderer.invoke(IPC_CHANNELS.webRemoteGetStatus),
+  updateWebRemote: (input) => ipcRenderer.invoke(IPC_CHANNELS.webRemoteUpdate, input),
   onConnectionStateChanged: (listener) => {
     const wrapped = (_event: Electron.IpcRendererEvent, state: ConnectionState) => listener(state)
     ipcRenderer.on(IPC_CHANNELS.connectionStateChanged, wrapped)
@@ -38,6 +40,11 @@ const api: TvRemoteApi = {
     const wrapped = (_event: Electron.IpcRendererEvent, devices: SavedDevice[]) => listener(devices)
     ipcRenderer.on(IPC_CHANNELS.devicesChanged, wrapped)
     return () => ipcRenderer.off(IPC_CHANNELS.devicesChanged, wrapped)
+  },
+  onWebRemoteStatusChanged: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, status: WebRemoteStatus) => listener(status)
+    ipcRenderer.on(IPC_CHANNELS.webRemoteStatusChanged, wrapped)
+    return () => ipcRenderer.off(IPC_CHANNELS.webRemoteStatusChanged, wrapped)
   }
 }
 

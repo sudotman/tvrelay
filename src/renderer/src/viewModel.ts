@@ -1,11 +1,309 @@
 import type {
+  ActionFeedback,
+  BackendHealthSnapshot,
+  ConnectionBackend,
+  ConnectionState,
   DevicePreferences,
+  DiagnosticsStatus,
+  FavoriteAppHotkey,
   LaunchableApp,
+  PreferredConnectionBackend,
   QuickAction,
   RecommendedAction,
   RemoteCommand,
-  SavedDevice
+  SavedDevice,
+  ScrcpyPreset
 } from '@shared/types'
+
+export type TabId = 'remote' | 'apps' | 'setup' | 'phone'
+export type ThemeMode = 'light' | 'dark'
+export type Tone = 'neutral' | 'positive' | 'danger' | 'warning'
+
+export interface SetupFormState {
+  name: string
+  host: string
+  preferredBackend: PreferredConnectionBackend
+  nativeRemotePort: string
+  nativePairingPort: string
+  nativeCode: string
+  adbEnabled: boolean
+  adbMode: 'pair' | 'connect'
+  connectPort: string
+  adbPairPort: string
+  adbPairCode: string
+}
+
+export interface RemoteButton {
+  label: string
+  /** Used in the tight 5-up grids where the full label would wrap. */
+  short?: string
+  command: RemoteCommand
+  accent?: boolean
+}
+
+export const initialForm: SetupFormState = {
+  name: '',
+  host: '',
+  preferredBackend: 'adb',
+  nativeRemotePort: '6466',
+  nativePairingPort: '6467',
+  nativeCode: '',
+  adbEnabled: true,
+  adbMode: 'pair',
+  connectPort: '5555',
+  adbPairPort: '37099',
+  adbPairCode: ''
+}
+
+export const coreRemoteButtons: RemoteButton[] = [
+  { label: 'Home', command: 'home' },
+  { label: 'Back', command: 'back' },
+  { label: 'Menu', command: 'menu' },
+  { label: 'Recents', command: 'appSwitch' },
+  { label: 'Power', command: 'power', accent: true },
+  { label: 'Sleep', command: 'sleep' }
+]
+
+export const mediaRemoteButtons: RemoteButton[] = [
+  { label: 'Previous', short: 'Prev', command: 'previous' },
+  { label: 'Rewind', short: 'Rew', command: 'rewind' },
+  { label: 'Play/Pause', short: 'Play', command: 'playPause', accent: true },
+  { label: 'Fast Forward', short: 'Fwd', command: 'fastForward' },
+  { label: 'Next', short: 'Next', command: 'next' }
+]
+
+export const soundRemoteButtons: RemoteButton[] = [
+  { label: 'Vol +', command: 'volumeUp' },
+  { label: 'Mute', command: 'mute' },
+  { label: 'Vol -', command: 'volumeDown' }
+]
+
+export const allRemoteButtons: RemoteButton[] = [
+  ...coreRemoteButtons,
+  ...mediaRemoteButtons,
+  ...soundRemoteButtons
+]
+
+export const favoriteHotkeys: FavoriteAppHotkey[] = ['1', '2', '3', '4', '5', '6', '7', '8', '9']
+
+export const scrcpyPresetLabels: Record<ScrcpyPreset, string> = {
+  fast: 'Fast',
+  high_quality: 'High quality',
+  no_audio: 'No audio',
+  record: 'Record'
+}
+
+export const viewTabs: Array<{ id: TabId; label: string; detail: string }> = [
+  { id: 'remote', label: 'Remote', detail: 'Playback, typing, and transport.' },
+  { id: 'apps', label: 'Apps', detail: 'Launch what is installed.' },
+  { id: 'setup', label: 'Setup', detail: 'TVs, pairing, and connection.' },
+  { id: 'phone', label: 'Phone', detail: 'Hand the remote to any phone on this network.' }
+]
+
+export function statusTone(status: ConnectionState['status']): Tone {
+  switch (status) {
+    case 'connected':
+      return 'positive'
+    case 'unauthorized':
+      return 'warning'
+    case 'error':
+      return 'danger'
+    default:
+      return 'neutral'
+  }
+}
+
+export function formatConnectionStatus(status: ConnectionState['status']): string {
+  switch (status) {
+    case 'disconnected':
+      return 'Not connected'
+    case 'pairing':
+      return 'Pairing'
+    case 'connecting':
+      return 'Connecting'
+    case 'connected':
+      return 'Connected'
+    case 'unauthorized':
+      return 'Unauthorized'
+    case 'error':
+      return 'Connection error'
+  }
+}
+
+export function backendLabel(backend: ConnectionBackend | null | undefined): string {
+  if (backend === 'native') {
+    return 'Native Remote'
+  }
+
+  if (backend === 'adb') {
+    return 'ADB'
+  }
+
+  return 'Not connected'
+}
+
+export function applyDeviceToForm(device: SavedDevice): SetupFormState {
+  return {
+    name: device.name,
+    host: device.host,
+    preferredBackend: device.preferredBackend ?? 'adb',
+    nativeRemotePort: String(device.nativeRemote?.remotePort ?? 6466),
+    nativePairingPort: String(device.nativeRemote?.pairingPort ?? 6467),
+    nativeCode: '',
+    adbEnabled: device.adbEnabled !== false,
+    adbMode: device.mode,
+    connectPort: String(device.connectPort ?? 5555),
+    adbPairPort: String(device.pairPort ?? 37099),
+    adbPairCode: ''
+  }
+}
+
+export function formatTimestamp(timestamp?: string): string {
+  if (!timestamp) {
+    return 'Never'
+  }
+
+  return new Date(timestamp).toLocaleString()
+}
+
+export function feedbackTone(status: ActionFeedback['status']): Tone {
+  switch (status) {
+    case 'success':
+    case 'sent':
+      return 'positive'
+    case 'blocked':
+      return 'warning'
+    case 'error':
+      return 'danger'
+  }
+}
+
+/** Routine d-pad presses stay silent; only refusals and failures interrupt. */
+export function shouldShowToast(feedback: ActionFeedback): boolean {
+  return feedback.kind !== 'remote' || feedback.status === 'blocked' || feedback.status === 'error'
+}
+
+export function getBackendHealthLabel(
+  snapshot: BackendHealthSnapshot | undefined,
+  unavailableLabel: string
+): string {
+  if (!snapshot || !snapshot.available) {
+    return unavailableLabel
+  }
+
+  if (snapshot.ready) {
+    return 'Ready'
+  }
+
+  if (snapshot.lastError) {
+    return 'Needs attention'
+  }
+
+  return 'Available'
+}
+
+export function getNativeSetupState(input: {
+  hasSelectedTv: boolean
+  waitingForNativeCode: boolean
+  pendingNativePairing: DiagnosticsStatus['pendingNativePairing']
+  isConnected: boolean
+  activeBackend: ConnectionBackend | null
+  nativePaired: boolean
+  nativeLastError?: string
+  nativeLastConnectedAt?: string
+}): { badge: string; title: string; detail: string; tone: Tone } {
+  if (!input.hasSelectedTv) {
+    return {
+      badge: 'Idle',
+      title: 'Choose a TV first',
+      detail: 'Native pairing stays off until you explicitly start it for a selected TV.',
+      tone: 'neutral'
+    }
+  }
+
+  if (input.waitingForNativeCode) {
+    return {
+      badge: 'Pairing',
+      title: 'Waiting for the TV code',
+      detail: input.pendingNativePairing
+        ? `${input.pendingNativePairing.name} is waiting for a native pairing code.`
+        : 'The TV should show a native pairing code before you confirm it here.',
+      tone: 'warning'
+    }
+  }
+
+  if (input.isConnected && input.activeBackend === 'native') {
+    return {
+      badge: 'Connected',
+      title: 'Native remote is connected',
+      detail: 'This TV is currently using the saved native pairing.',
+      tone: 'positive'
+    }
+  }
+
+  if (input.nativePaired) {
+    return {
+      badge: 'Saved',
+      title: 'Native pairing is saved',
+      detail: 'Use it only when you intentionally want to try the native path.',
+      tone: 'positive'
+    }
+  }
+
+  if (input.nativeLastError) {
+    return {
+      badge: 'Failed',
+      title: 'Native pairing needs attention',
+      detail: input.nativeLastError,
+      tone: 'danger'
+    }
+  }
+
+  return {
+    badge: 'Optional',
+    title: 'Native pairing is not saved yet',
+    detail: input.nativeLastConnectedAt
+      ? `Last successful native session was ${formatTimestamp(input.nativeLastConnectedAt)}. Pair again only if you want to reuse it.`
+      : 'Nothing will start automatically. Start native pairing only if you want to try this optional path.',
+    tone: 'neutral'
+  }
+}
+
+export function filterPaletteItems(items: CommandPaletteItem[], query: string): CommandPaletteItem[] {
+  const normalized = query.trim().toLowerCase()
+
+  if (!normalized) {
+    return items.slice(0, 18)
+  }
+
+  return items
+    .filter((item) =>
+      [item.label, item.detail, item.section].join(' ').toLowerCase().includes(normalized)
+    )
+    .slice(0, 24)
+}
+
+/** Two-letter monogram used when an app has no icon. */
+export function appMonogram(displayName: string): string {
+  return displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('')
+    .slice(0, 2)
+}
+
+/** Stable per-package hue so icon-less tiles stay distinguishable. */
+export function appHue(packageName: string): number {
+  let hash = 0
+
+  for (const character of packageName) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0
+  }
+
+  return hash % 360
+}
 
 export const keyBindings: Partial<Record<string, RemoteCommand>> = {
   ArrowUp: 'up',

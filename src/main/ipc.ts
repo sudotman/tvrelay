@@ -11,7 +11,8 @@ import type {
   RemoteCommand,
   SaveDeviceInput,
   SendTextInput,
-  UpdateDevicePreferencesInput
+  UpdateDevicePreferencesInput,
+  UpdateWebRemoteInput
 } from '@shared/types'
 import type { AppController } from './services/appController'
 import type { ActionController } from './services/actionController'
@@ -21,6 +22,7 @@ import type { AdbLocator } from './services/adb/adbLocator'
 import type { AdbClient } from './services/adb/adbClient'
 import type { ScrcpyController } from './services/scrcpyController'
 import type { SideloadController } from './services/sideloadController'
+import type { WebRemoteServer } from './services/web/webRemoteServer'
 
 interface RegisterIpcOptions {
   deviceManager: DeviceManager
@@ -29,6 +31,7 @@ interface RegisterIpcOptions {
   actionController: ActionController
   scrcpyController: ScrcpyController
   sideloadController: SideloadController
+  webRemoteServer: WebRemoteServer
   adbLocator: AdbLocator
   adbClient: AdbClient
   getMainWindow: () => BrowserWindow | null
@@ -42,6 +45,7 @@ export function registerIpc(options: RegisterIpcOptions): void {
     actionController,
     scrcpyController,
     sideloadController,
+    webRemoteServer,
     adbLocator,
     adbClient,
     getMainWindow
@@ -109,6 +113,12 @@ export function registerIpc(options: RegisterIpcOptions): void {
     sideloadController.installApk(input.id)
   )
 
+  ipcMain.handle(IPC_CHANNELS.webRemoteGetStatus, () => webRemoteServer.getStatus())
+
+  ipcMain.handle(IPC_CHANNELS.webRemoteUpdate, (_event, input: UpdateWebRemoteInput) =>
+    webRemoteServer.update(input)
+  )
+
   ipcMain.handle(IPC_CHANNELS.diagnosticsGetStatus, async () => {
     const adbInfo = await adbLocator.locate()
     const version =
@@ -155,5 +165,9 @@ export function registerIpc(options: RegisterIpcOptions): void {
 
   deviceManager.on('devicesChanged', (devices) => {
     getMainWindow()?.webContents.send(IPC_CHANNELS.devicesChanged, devices)
+  })
+
+  webRemoteServer.on('status', (status) => {
+    getMainWindow()?.webContents.send(IPC_CHANNELS.webRemoteStatusChanged, status)
   })
 }

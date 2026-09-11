@@ -27,8 +27,11 @@ const IPC_CHANNELS = {
   scrcpyLaunch: "scrcpy.launch",
   sideloadChooseApk: "sideload.chooseApk",
   sideloadInstallApk: "sideload.installApk",
+  webRemoteGetStatus: "webRemote.getStatus",
+  webRemoteUpdate: "webRemote.update",
   connectionStateChanged: "events.connectionStateChanged",
-  devicesChanged: "events.devicesChanged"
+  devicesChanged: "events.devicesChanged",
+  webRemoteStatusChanged: "events.webRemoteStatusChanged"
 };
 const api = {
   listDevices: () => electron.ipcRenderer.invoke(IPC_CHANNELS.devicesList),
@@ -57,6 +60,8 @@ const api = {
   launchScrcpy: (input) => electron.ipcRenderer.invoke(IPC_CHANNELS.scrcpyLaunch, input),
   chooseApkFile: () => electron.ipcRenderer.invoke(IPC_CHANNELS.sideloadChooseApk),
   installApk: (input) => electron.ipcRenderer.invoke(IPC_CHANNELS.sideloadInstallApk, input),
+  getWebRemoteStatus: () => electron.ipcRenderer.invoke(IPC_CHANNELS.webRemoteGetStatus),
+  updateWebRemote: (input) => electron.ipcRenderer.invoke(IPC_CHANNELS.webRemoteUpdate, input),
   onConnectionStateChanged: (listener) => {
     const wrapped = (_event, state) => listener(state);
     electron.ipcRenderer.on(IPC_CHANNELS.connectionStateChanged, wrapped);
@@ -66,6 +71,11 @@ const api = {
     const wrapped = (_event, devices) => listener(devices);
     electron.ipcRenderer.on(IPC_CHANNELS.devicesChanged, wrapped);
     return () => electron.ipcRenderer.off(IPC_CHANNELS.devicesChanged, wrapped);
+  },
+  onWebRemoteStatusChanged: (listener) => {
+    const wrapped = (_event, status) => listener(status);
+    electron.ipcRenderer.on(IPC_CHANNELS.webRemoteStatusChanged, wrapped);
+    return () => electron.ipcRenderer.off(IPC_CHANNELS.webRemoteStatusChanged, wrapped);
   }
 };
 electron.contextBridge.exposeInMainWorld("tvRemoteApi", api);

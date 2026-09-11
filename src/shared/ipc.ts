@@ -20,7 +20,9 @@ import type {
   ScrcpyStatus,
   SelectedApkFile,
   SendTextInput,
-  UpdateDevicePreferencesInput
+  UpdateDevicePreferencesInput,
+  UpdateWebRemoteInput,
+  WebRemoteStatus
 } from './types'
 
 export interface TvRemoteApi {
@@ -50,8 +52,11 @@ export interface TvRemoteApi {
   launchScrcpy: (input: LaunchScrcpyInput) => Promise<ActionFeedback>
   chooseApkFile: () => Promise<SelectedApkFile | null>
   installApk: (input: InstallApkInput) => Promise<ActionFeedback>
+  getWebRemoteStatus: () => Promise<WebRemoteStatus>
+  updateWebRemote: (input: UpdateWebRemoteInput) => Promise<WebRemoteStatus>
   onConnectionStateChanged: (listener: (state: ConnectionState) => void) => () => void
   onDevicesChanged: (listener: (devices: SavedDevice[]) => void) => () => void
+  onWebRemoteStatusChanged: (listener: (status: WebRemoteStatus) => void) => () => void
 }
 
 export const IPC_CHANNELS = {
@@ -81,6 +86,9 @@ export const IPC_CHANNELS = {
   scrcpyLaunch: 'scrcpy.launch',
   sideloadChooseApk: 'sideload.chooseApk',
   sideloadInstallApk: 'sideload.installApk',
+  webRemoteGetStatus: 'webRemote.getStatus',
+  webRemoteUpdate: 'webRemote.update',
   connectionStateChanged: 'events.connectionStateChanged',
-  devicesChanged: 'events.devicesChanged'
+  devicesChanged: 'events.devicesChanged',
+  webRemoteStatusChanged: 'events.webRemoteStatusChanged'
 } as const
