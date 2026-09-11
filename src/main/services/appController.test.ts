@@ -115,6 +115,61 @@ describe('AppController', () => {
     expect(deviceManager.recordAppLaunch).toHaveBeenCalledWith(app.packageName)
   })
 
+  it('caches the foreground app for clients that must not hit ADB themselves', async () => {
+    const deviceManager = createDeviceManager()
+    const adbClient = {
+      getForegroundApp: vi.fn().mockResolvedValue({
+        packageName: 'com.netflix.ninja',
+        displayName: 'Netflix'
+      })
+    } as unknown as AdbClient
+
+    vi.mocked(deviceManager.withAdbAccess).mockImplementation(
+      async <T>(callback: (serial: string) => Promise<T>) => callback('tv-serial')
+    )
+
+    const controller = new AppController(deviceManager, adbClient)
+
+    expect(controller.getCachedForegroundApp()).toBeNull()
+
+    await controller.getForegroundApp()
+
+    expect(controller.getCachedForegroundApp()).toEqual({
+      packageName: 'com.netflix.ninja',
+      displayName: 'Netflix'
+    })
+    // Reading the cache must never reach the TV again.
+    expect(adbClient.getForegroundApp).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports nothing rather than a stale foreground app once the TTL lapses', async () => {
+    vi.useFakeTimers()
+
+    try {
+      const deviceManager = createDeviceManager()
+      const adbClient = {
+        getForegroundApp: vi.fn().mockResolvedValue({
+          packageName: 'com.netflix.ninja',
+          displayName: 'Netflix'
+        })
+      } as unknown as AdbClient
+
+      vi.mocked(deviceManager.withAdbAccess).mockImplementation(
+        async <T>(callback: (serial: string) => Promise<T>) => callback('tv-serial')
+      )
+
+      const controller = new AppController(deviceManager, adbClient)
+
+      await controller.getForegroundApp()
+      expect(controller.getCachedForegroundApp()).not.toBeNull()
+
+      vi.advanceTimersByTime(21_000)
+      expect(controller.getCachedForegroundApp()).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('toggles favorites without disturbing cached apps', async () => {
     const deviceManager = createDeviceManager({ withCachedApps: true })
     const controller = new AppController(deviceManager, {} as AdbClient)

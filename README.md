@@ -7,6 +7,20 @@ the app will work with most android tvs/smart tvs.
 
 [![Demo screenshot of TV Relay desktop application showing the Android TV setup and control interface with dark theme. The left sidebar displays setup options, device roster showing a connected bedroom TV at 192.168.29.40, remote controls for playback and typing, and apps launcher. The main content area shows the configuration panel for connecting with ADB, displaying fields for ADB pair port (37099), connect port (5555), and pair code (654321), along with diagnostics showing both ADB and Native Remote as Ready. The interface has a professional dark blue color scheme with blue accent buttons and status indicators.](https://github.com/sudotman/sudotman/blob/main/demos/tvrelay/ss1.png?raw=true)](https://github.com/sudotman/sudotman/blob/main/demos/tvrelay/ss1.png?raw=true)
 
+> note: the screenshot above predates the interface overhaul described below and needs regenerating.
+
+## interface
+
+the app is dark only, built around one glass panel in a warm near-black room.
+
+- the four views — Remote, Apps, Setup, Phone — sit in a floating segmented control at the top
+- the device chip on the right always says which TV, which backend, and whether it is connected; wake and disconnect live in its menu
+- the remote view shows what is on the TV, an oversized pad you can tap on its edges or flick anywhere on its face, and volume
+- everything else — the full key grid, typing, screen mirroring, sideloading, shortcuts, and pad customisation — is one click away under **More**
+- `⌘K` opens the command palette from anywhere
+
+the phone remote uses the same palette and the same pad, so the two halves read as one product.
+
 ## phone remote
 
 the desktop app can serve a touch remote over your local network. turn it on in the **Phone** tab, then scan the QR code (or open the printed URL and type the access code) on any phone or tablet on the same Wi-Fi.

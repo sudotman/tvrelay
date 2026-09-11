@@ -2266,11 +2266,17 @@ class RemoteController {
     };
   }
 }
+const FOREGROUND_CACHE_TTL_MS = 2e4;
 class AppController {
   constructor(deviceManager2, adbClient) {
     this.deviceManager = deviceManager2;
     this.adbClient = adbClient;
   }
+  /**
+   * Last value the desktop poll saw. Clients that must not create their own ADB
+   * traffic (the phone remote) read this instead of asking the TV again.
+   */
+  lastForegroundApp = null;
   async listApps(forceRefresh = false) {
     const activeDevice = this.deviceManager.getActiveDevice();
     if (!activeDevice) {
@@ -2304,9 +2310,24 @@ class AppController {
   async getForegroundApp() {
     const activeDevice = this.deviceManager.getActiveDevice();
     if (!activeDevice) {
+      this.lastForegroundApp = null;
       return null;
     }
-    return this.deviceManager.withAdbAccess((serial) => this.adbClient.getForegroundApp(serial));
+    const app2 = await this.deviceManager.withAdbAccess(
+      (serial) => this.adbClient.getForegroundApp(serial)
+    );
+    this.lastForegroundApp = { app: app2, at: Date.now() };
+    return app2;
+  }
+  /** Goes stale rather than lying: past the TTL this reports nothing. */
+  getCachedForegroundApp() {
+    if (!this.lastForegroundApp || !this.deviceManager.getActiveDevice()) {
+      return null;
+    }
+    if (Date.now() - this.lastForegroundApp.at > FOREGROUND_CACHE_TTL_MS) {
+      return null;
+    }
+    return this.lastForegroundApp.app;
   }
   async launchPackage(packageName) {
     const activeDevice = this.deviceManager.getActiveDevice();
@@ -3374,14 +3395,14 @@ function renderQrCodeSvg(text, options) {
   ].join("");
 }
 const indexHtml = `<!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#0a0a0f" />
+    <meta name="theme-color" content="#100e0e" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -3394,7 +3415,8 @@ const indexHtml = `<!doctype html>
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
-    <div class="ambient" aria-hidden="true"></div>
+    <!-- Two soft lights, warm and cool, so the screen has depth without an edge. -->
+    <div class="wash" aria-hidden="true"></div>
 
     <!-- Shown until the access code is accepted. -->
     <section id="gate" class="gate" hidden>
@@ -3419,12 +3441,12 @@ const indexHtml = `<!doctype html>
 
     <div id="app" class="app" hidden>
       <header class="topbar">
-        <div class="identity">
-          <span id="status-dot" class="dot" aria-hidden="true"></span>
-          <div class="identity-copy">
-            <strong id="device-name">No TV connected</strong>
-            <small id="device-detail">Waiting for the desktop app</small>
-          </div>
+        <div id="now-art" class="now-art is-idle" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2" /><path d="M8 21h8" /></svg>
+        </div>
+        <div class="now-copy">
+          <strong id="now-title">No TV connected</strong>
+          <small id="now-detail"><span id="status-dot" class="dot"></span><span id="now-detail-text">Waiting for the desktop app</span></small>
         </div>
         <button id="power" class="icon-button danger" type="button" aria-label="Power">
           <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -3437,75 +3459,80 @@ const indexHtml = `<!doctype html>
       <main class="panes">
         <section id="pane-remote" class="pane is-active">
           <div class="pad-stage">
-            <div class="dpad" role="group" aria-label="Directional pad">
-              <button class="dpad-dir up" data-key="up" aria-label="Up"><i></i></button>
-              <button class="dpad-dir right" data-key="right" aria-label="Right"><i></i></button>
-              <button class="dpad-dir down" data-key="down" aria-label="Down"><i></i></button>
-              <button class="dpad-dir left" data-key="left" aria-label="Left"><i></i></button>
-              <button class="dpad-ok" data-key="select" aria-label="Select">OK</button>
+            <div class="softpad" role="group" aria-label="Directional pad">
+              <button class="softpad-dir up" data-key="up" aria-label="Up">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 15 7-7 7 7" /></svg>
+              </button>
+              <button class="softpad-dir right" data-key="right" aria-label="Right">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
+              </button>
+              <button class="softpad-dir down" data-key="down" aria-label="Down">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 9 7 7 7-7" /></svg>
+              </button>
+              <button class="softpad-dir left" data-key="left" aria-label="Left">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7" /></svg>
+              </button>
+              <button class="softpad-ok" data-key="select" aria-label="Select">OK</button>
             </div>
-
-            <div class="rocker" role="group" aria-label="Volume">
-              <button data-key="volumeUp" aria-label="Volume up">+</button>
-              <span class="rocker-label">VOL</span>
-              <button data-key="volumeDown" aria-label="Volume down">&minus;</button>
-            </div>
+            <p class="pad-hint">Swipe to move &middot; tap to select</p>
           </div>
 
-          <div class="control-rows">
-            <div class="row three">
-              <button class="tile" data-key="back">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5 3 12l7 7" /><path d="M3 12h13a5 5 0 0 1 0 10h-3" /></svg>
-                <span>Back</span>
-              </button>
-              <button class="tile" data-key="home">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 11 9-8 9 8" /><path d="M6 10v10h12V10" /></svg>
-                <span>Home</span>
-              </button>
-              <button class="tile" data-key="menu">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16" /><path d="M4 12h16" /><path d="M4 17h16" /></svg>
-                <span>Menu</span>
-              </button>
-            </div>
+          <div class="quick-row">
+            <button class="quick" data-key="back">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5 3 12l7 7" /><path d="M3 12h13a5 5 0 0 1 0 10h-3" /></svg>
+              <span>Back</span>
+            </button>
+            <button class="quick accent" data-key="playPause">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14" /><path d="M16 5v14" /></svg>
+              <span>Play</span>
+            </button>
+            <button class="quick" data-key="home">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 11 9-8 9 8" /><path d="M6 10v10h12V10" /></svg>
+              <span>Home</span>
+            </button>
+          </div>
 
-            <div class="row five transport">
-              <button class="tile ghost" data-key="previous" aria-label="Previous">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14L8 12z" /><path d="M6 5v14" /></svg>
-              </button>
-              <button class="tile ghost" data-key="rewind" aria-label="Rewind">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5v14L2 12z" /><path d="M22 5v14l-9-7z" /></svg>
-              </button>
-              <button class="tile accent" data-key="playPause" aria-label="Play or pause">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14" /><path d="M16 5v14" /></svg>
-              </button>
-              <button class="tile ghost" data-key="fastForward" aria-label="Fast forward">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 5v14l9-7z" /><path d="M2 5v14l9-7z" /></svg>
-              </button>
-              <button class="tile ghost" data-key="next" aria-label="Next">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14l10-7z" /><path d="M18 5v14" /></svg>
-              </button>
-            </div>
+          <div class="vol-row" role="group" aria-label="Volume">
+            <button class="vol" data-key="volumeDown" aria-label="Volume down">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg>
+            </button>
+            <span class="vol-label">VOL</span>
+            <button class="vol" data-key="volumeUp" aria-label="Volume up">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6v12" /><path d="M6 12h12" /></svg>
+            </button>
+            <button class="vol" data-key="mute" aria-label="Mute">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z" /><path d="m16 9 5 6" /><path d="m21 9-5 6" /></svg>
+            </button>
+          </div>
 
-            <div class="row three">
-              <button class="tile" data-key="mute">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z" /><path d="m16 9 5 6" /><path d="m21 9-5 6" /></svg>
-                <span>Mute</span>
-              </button>
-              <button class="tile" data-key="appSwitch">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4z" /><path d="M13 4h7v7h-7z" /><path d="M4 13h7v7H4z" /><path d="M13 13h7v7h-7z" /></svg>
-                <span>Recents</span>
-              </button>
-              <button class="tile" id="wake">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3" /><path d="M12 18v3" /><path d="M5 12H2" /><path d="M22 12h-3" /><circle cx="12" cy="12" r="4" /></svg>
-                <span>Wake</span>
-              </button>
+          <button id="more" class="more-trigger" type="button" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" /></svg>
+            <span>More keys</span>
+          </button>
+
+          <!-- Everything Ambient keeps off the calm surface, one tap away. -->
+          <div id="more-sheet" class="more-sheet" hidden>
+            <div class="row four">
+              <button class="tile" data-key="menu"><span>Menu</span></button>
+              <button class="tile" data-key="appSwitch"><span>Recents</span></button>
+              <button class="tile" id="wake"><span>Wake</span></button>
+              <button class="tile" data-key="sleep"><span>Sleep</span></button>
+            </div>
+            <div class="row four">
+              <button class="tile" data-key="previous"><span>Prev</span></button>
+              <button class="tile" data-key="rewind"><span>Rew</span></button>
+              <button class="tile" data-key="fastForward"><span>Ffwd</span></button>
+              <button class="tile" data-key="next"><span>Next</span></button>
             </div>
           </div>
         </section>
 
         <section id="pane-apps" class="pane">
           <div class="pane-head">
-            <input id="app-search" type="search" placeholder="Search apps" aria-label="Search apps" />
+            <div class="search">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m16.5 16.5 4 4" /></svg>
+              <input id="app-search" type="search" placeholder="Search apps" aria-label="Search apps" />
+            </div>
             <button id="app-refresh" class="icon-button" type="button" aria-label="Refresh apps">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.9 5" /><path d="M20 4v7h-7" /></svg>
             </button>
@@ -3531,7 +3558,7 @@ const indexHtml = `<!doctype html>
           <div class="row three">
             <button class="tile" data-key="enter"><span>Enter</span></button>
             <button class="tile" data-key="delete"><span>Delete</span></button>
-            <button class="tile" data-key="sleep"><span>Sleep</span></button>
+            <button class="tile" data-key="back"><span>Back</span></button>
           </div>
           <div class="type-hint">
             <strong>Typing needs ADB.</strong>
@@ -3541,18 +3568,9 @@ const indexHtml = `<!doctype html>
       </main>
 
       <nav class="tabbar" role="tablist">
-        <button class="tab is-active" data-pane="remote" role="tab" aria-selected="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="4" /><circle cx="12" cy="8" r="1.6" /><path d="M10 14h4" /><path d="M10 17.5h4" /></svg>
-          <span>Remote</span>
-        </button>
-        <button class="tab" data-pane="apps" role="tab" aria-selected="false">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></svg>
-          <span>Apps</span>
-        </button>
-        <button class="tab" data-pane="type" role="tab" aria-selected="false">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="3" /><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8" /></svg>
-          <span>Type</span>
-        </button>
+        <button class="tab is-active" data-pane="remote" role="tab" aria-selected="true">Remote</button>
+        <button class="tab" data-pane="apps" role="tab" aria-selected="false">Apps</button>
+        <button class="tab" data-pane="type" role="tab" aria-selected="false">Type</button>
       </nav>
 
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -3562,10 +3580,555 @@ const indexHtml = `<!doctype html>
   </body>
 </html>
 `;
-const appCss = '/* Relay phone remote — dark-first, thumb-first, one screen deep. */\n\n:root {\n  color-scheme: dark;\n  --bg: #08080d;\n  --surface: rgba(255, 255, 255, 0.045);\n  --surface-strong: rgba(255, 255, 255, 0.08);\n  --line: rgba(255, 255, 255, 0.09);\n  --line-strong: rgba(255, 255, 255, 0.16);\n  --ink: #f4f4f8;\n  --muted: #9295a8;\n  --accent: #7c5cff;\n  --accent-soft: rgba(124, 92, 255, 0.18);\n  --teal: #00d8c4;\n  --positive: #34d399;\n  --warn: #fbbf24;\n  --danger: #fb7185;\n  --radius: 20px;\n  --tap: cubic-bezier(0.2, 0.9, 0.3, 1);\n}\n\n* {\n  box-sizing: border-box;\n  -webkit-tap-highlight-color: transparent;\n}\n\nhtml,\nbody {\n  height: 100%;\n  margin: 0;\n  overscroll-behavior: none;\n}\n\nbody {\n  background: var(--bg);\n  color: var(--ink);\n  font: 400 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;\n  -webkit-font-smoothing: antialiased;\n  user-select: none;\n  -webkit-user-select: none;\n  touch-action: manipulation;\n}\n\n.ambient {\n  position: fixed;\n  inset: 0;\n  pointer-events: none;\n  background:\n    radial-gradient(70% 45% at 50% -8%, rgba(124, 92, 255, 0.3), transparent 70%),\n    radial-gradient(55% 40% at 105% 105%, rgba(0, 216, 196, 0.16), transparent 70%);\n  z-index: 0;\n}\n\nbutton {\n  font: inherit;\n  color: inherit;\n  border: 0;\n  background: none;\n  cursor: pointer;\n}\n\ninput,\ntextarea {\n  font: inherit;\n  color: inherit;\n  width: 100%;\n  border: 1px solid var(--line);\n  border-radius: 14px;\n  padding: 0.85rem 1rem;\n  background: rgba(0, 0, 0, 0.35);\n  user-select: text;\n  -webkit-user-select: text;\n}\n\ninput:focus,\ntextarea:focus {\n  outline: 2px solid var(--accent);\n  outline-offset: 1px;\n}\n\n/* ---------- access gate ---------- */\n\n.gate {\n  position: relative;\n  z-index: 1;\n  display: grid;\n  place-items: center;\n  min-height: 100dvh;\n  padding: 1.5rem;\n}\n\n.gate[hidden],\n.app[hidden] {\n  display: none;\n}\n\n.gate-card {\n  width: min(24rem, 100%);\n  padding: 2rem 1.6rem;\n  border: 1px solid var(--line);\n  border-radius: 26px;\n  background: rgba(16, 16, 24, 0.82);\n  backdrop-filter: blur(20px);\n  text-align: center;\n}\n\n.gate-card h1 {\n  margin: 1rem 0 0.4rem;\n  font-size: 1.7rem;\n  letter-spacing: -0.02em;\n}\n\n.gate-card p {\n  margin: 0 0 1.25rem;\n  color: var(--muted);\n  font-size: 0.92rem;\n}\n\n.gate-card form {\n  display: grid;\n  gap: 0.65rem;\n}\n\n#gate-input {\n  text-align: center;\n  letter-spacing: 0.35em;\n  text-transform: uppercase;\n  font-size: 1.1rem;\n  font-weight: 600;\n}\n\n.gate-error {\n  margin: 0.9rem 0 0;\n  min-height: 1.2em;\n  color: var(--danger);\n  font-size: 0.85rem;\n}\n\n.brand-mark {\n  display: grid;\n  place-items: center;\n  width: 54px;\n  height: 54px;\n  margin: 0 auto;\n  border-radius: 17px;\n  background: linear-gradient(150deg, var(--accent), var(--teal));\n  box-shadow: 0 12px 34px rgba(124, 92, 255, 0.4);\n}\n\n.brand-mark span {\n  width: 20px;\n  height: 14px;\n  border: 2.5px solid rgba(255, 255, 255, 0.95);\n  border-radius: 4px;\n}\n\n.primary,\n.secondary {\n  min-height: 3rem;\n  padding: 0 1.1rem;\n  border-radius: 14px;\n  font-weight: 600;\n  transition: transform 0.12s var(--tap), filter 0.12s var(--tap);\n}\n\n.primary {\n  background: linear-gradient(150deg, var(--accent), #5b3fe0);\n  color: #fff;\n  box-shadow: 0 10px 24px rgba(124, 92, 255, 0.32);\n}\n\n.secondary {\n  border: 1px solid var(--line-strong);\n  background: var(--surface);\n}\n\n.primary:active,\n.secondary:active {\n  transform: scale(0.97);\n  filter: brightness(1.15);\n}\n\nbutton:disabled {\n  opacity: 0.45;\n  pointer-events: none;\n}\n\n/* ---------- shell ---------- */\n\n.app {\n  position: relative;\n  z-index: 1;\n  display: grid;\n  grid-template-rows: auto minmax(0, 1fr) auto;\n  height: 100dvh;\n  padding-top: env(safe-area-inset-top);\n}\n\n.topbar {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 1rem;\n  padding: 0.85rem 1.1rem;\n  border-bottom: 1px solid var(--line);\n}\n\n.identity {\n  display: flex;\n  align-items: center;\n  gap: 0.7rem;\n  min-width: 0;\n}\n\n.identity-copy {\n  display: grid;\n  min-width: 0;\n}\n\n.identity-copy strong {\n  font-size: 1rem;\n  letter-spacing: -0.01em;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.identity-copy small {\n  color: var(--muted);\n  font-size: 0.76rem;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.dot {\n  flex: none;\n  width: 10px;\n  height: 10px;\n  border-radius: 50%;\n  background: var(--muted);\n  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.06);\n}\n\n.dot.is-live {\n  background: var(--positive);\n  box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.16);\n  animation: pulse 2.4s ease-in-out infinite;\n}\n\n.dot.is-busy {\n  background: var(--warn);\n  box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.16);\n}\n\n.dot.is-down {\n  background: var(--danger);\n  box-shadow: 0 0 0 4px rgba(251, 113, 133, 0.16);\n}\n\n@keyframes pulse {\n  50% {\n    opacity: 0.55;\n  }\n}\n\n.icon-button {\n  display: grid;\n  place-items: center;\n  flex: none;\n  width: 44px;\n  height: 44px;\n  border: 1px solid var(--line);\n  border-radius: 14px;\n  background: var(--surface);\n  transition: transform 0.12s var(--tap), background 0.12s var(--tap);\n}\n\n.icon-button:active {\n  transform: scale(0.93);\n  background: var(--surface-strong);\n}\n\n.icon-button.danger {\n  color: var(--danger);\n  border-color: rgba(251, 113, 133, 0.28);\n  background: rgba(251, 113, 133, 0.1);\n}\n\nsvg {\n  width: 22px;\n  height: 22px;\n  fill: none;\n  stroke: currentColor;\n  stroke-width: 1.8;\n  stroke-linecap: round;\n  stroke-linejoin: round;\n}\n\n/* ---------- panes ---------- */\n\n.panes {\n  position: relative;\n  min-height: 0;\n  overflow: hidden;\n}\n\n.pane {\n  display: none;\n  height: 100%;\n  padding: 1.1rem 1.1rem 0.5rem;\n  overflow-y: auto;\n  -webkit-overflow-scrolling: touch;\n}\n\n.pane.is-active {\n  display: block;\n  animation: rise 0.22s var(--tap);\n}\n\n@keyframes rise {\n  from {\n    opacity: 0;\n    transform: translateY(8px);\n  }\n}\n\n/* ---------- d-pad ---------- */\n\n#pane-remote.is-active {\n  display: flex;\n  flex-direction: column;\n  gap: 0.6rem;\n  padding-bottom: 1rem;\n}\n\n.control-rows {\n  display: grid;\n  gap: 0.6rem;\n}\n\n.pad-stage {\n  display: flex;\n  flex: 1 1 auto;\n  min-height: 0;\n  align-items: center;\n  justify-content: center;\n  gap: 1rem;\n}\n\n.dpad {\n  position: relative;\n  flex: none;\n  width: min(62vw, 17rem);\n  max-width: 100%;\n  aspect-ratio: 1;\n  border-radius: 50%;\n  background:\n    radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.1), transparent 60%),\n    rgba(255, 255, 255, 0.05);\n  border: 1px solid var(--line);\n  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 24px 48px rgba(0, 0, 0, 0.55);\n}\n\n.dpad-dir {\n  position: absolute;\n  inset: 0;\n  display: flex;\n  border-radius: 50%;\n  transition: background 0.1s var(--tap);\n}\n\n/* Each direction is a quadrant wedge of the same circle. */\n.dpad-dir.up {\n  clip-path: polygon(50% 50%, 0 0, 100% 0);\n  align-items: flex-start;\n  justify-content: center;\n  padding-top: 9%;\n}\n\n.dpad-dir.right {\n  clip-path: polygon(50% 50%, 100% 0, 100% 100%);\n  align-items: center;\n  justify-content: flex-end;\n  padding-right: 9%;\n}\n\n.dpad-dir.down {\n  clip-path: polygon(50% 50%, 100% 100%, 0 100%);\n  align-items: flex-end;\n  justify-content: center;\n  padding-bottom: 9%;\n}\n\n.dpad-dir.left {\n  clip-path: polygon(50% 50%, 0 100%, 0 0);\n  align-items: center;\n  justify-content: flex-start;\n  padding-left: 9%;\n}\n\n.dpad-dir:active {\n  background: var(--accent-soft);\n}\n\n.dpad-dir i {\n  display: block;\n  width: 13px;\n  height: 13px;\n  border-style: solid;\n  border-color: rgba(255, 255, 255, 0.72);\n  border-width: 2.5px 2.5px 0 0;\n}\n\n.dpad-dir.up i {\n  transform: rotate(-45deg) translate(-2px, 2px);\n}\n\n.dpad-dir.right i {\n  transform: rotate(45deg);\n}\n\n.dpad-dir.down i {\n  transform: rotate(135deg) translate(-2px, 2px);\n}\n\n.dpad-dir.left i {\n  transform: rotate(-135deg);\n}\n\n.dpad-ok {\n  position: absolute;\n  inset: 27%;\n  border-radius: 50%;\n  border: 1px solid var(--line-strong);\n  background: linear-gradient(155deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04));\n  font-size: 0.95rem;\n  font-weight: 700;\n  letter-spacing: 0.06em;\n  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);\n  transition: transform 0.12s var(--tap), background 0.12s var(--tap);\n}\n\n.dpad-ok:active {\n  transform: scale(0.94);\n  background: linear-gradient(155deg, var(--accent), #5b3fe0);\n  border-color: transparent;\n}\n\n.rocker {\n  display: grid;\n  grid-template-rows: 1fr auto 1fr;\n  flex: none;\n  gap: 0.2rem;\n  justify-items: center;\n  align-items: center;\n  width: 3.6rem;\n  height: min(46vw, 12.5rem);\n  padding: 0.4rem 0;\n  border: 1px solid var(--line);\n  border-radius: 2rem;\n  background: var(--surface);\n}\n\n.rocker button {\n  width: 100%;\n  height: 100%;\n  border-radius: 1.7rem;\n  font-size: 1.5rem;\n  font-weight: 500;\n  transition: background 0.12s var(--tap);\n}\n\n.rocker button:active {\n  background: var(--accent-soft);\n}\n\n.rocker-label {\n  color: var(--muted);\n  font-size: 0.6rem;\n  font-weight: 700;\n  letter-spacing: 0.16em;\n}\n\n/* ---------- button rows ---------- */\n\n.row {\n  display: grid;\n  gap: 0.6rem;\n}\n\n.row.three {\n  grid-template-columns: repeat(3, 1fr);\n}\n\n.row.five {\n  grid-template-columns: repeat(5, 1fr);\n}\n\n.tile {\n  display: grid;\n  gap: 0.3rem;\n  place-items: center;\n  min-height: 4rem;\n  padding: 0.6rem 0.3rem;\n  border: 1px solid var(--line);\n  border-radius: 18px;\n  background: var(--surface);\n  font-size: 0.76rem;\n  font-weight: 500;\n  color: var(--ink);\n  transition: transform 0.12s var(--tap), background 0.12s var(--tap);\n}\n\n.tile:active {\n  transform: scale(0.95);\n  background: var(--surface-strong);\n}\n\n.tile.ghost {\n  min-height: 3.4rem;\n  background: transparent;\n}\n\n.tile.accent {\n  background: linear-gradient(150deg, var(--accent), #5b3fe0);\n  border-color: transparent;\n  box-shadow: 0 10px 24px rgba(124, 92, 255, 0.3);\n}\n\n.transport {\n  align-items: center;\n}\n\n/* ---------- apps ---------- */\n\n.pane-head {\n  display: flex;\n  gap: 0.6rem;\n  margin-bottom: 0.9rem;\n}\n\n#pane-type .row {\n  margin-bottom: 0.9rem;\n}\n\n.app-grid {\n  display: grid;\n  grid-template-columns: repeat(auto-fill, minmax(5.1rem, 1fr));\n  gap: 0.75rem;\n  padding-bottom: 0.5rem;\n}\n\n.app-card {\n  display: grid;\n  gap: 0.45rem;\n  justify-items: center;\n  padding: 0.75rem 0.3rem;\n  border: 1px solid var(--line);\n  border-radius: 18px;\n  background: var(--surface);\n  transition: transform 0.12s var(--tap), background 0.12s var(--tap);\n}\n\n.app-card:active {\n  transform: scale(0.94);\n  background: var(--surface-strong);\n}\n\n.app-card.is-busy {\n  border-color: var(--accent);\n}\n\n.app-card img,\n.app-card .fallback {\n  width: 44px;\n  height: 44px;\n  border-radius: 12px;\n  object-fit: cover;\n}\n\n.app-card .fallback {\n  display: grid;\n  place-items: center;\n  background: linear-gradient(\n    150deg,\n    hsl(var(--hue, 260) 72% 58%),\n    hsl(calc(var(--hue, 260) + 40) 68% 44%)\n  );\n  color: #fff;\n  font-size: 1rem;\n  font-weight: 700;\n  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);\n}\n\n.app-card span {\n  width: 100%;\n  font-size: 0.7rem;\n  line-height: 1.25;\n  text-align: center;\n  overflow: hidden;\n  display: -webkit-box;\n  -webkit-line-clamp: 2;\n  -webkit-box-orient: vertical;\n}\n\n.app-card .pin {\n  position: absolute;\n  inset-block-start: 0.35rem;\n  inset-inline-end: 0.45rem;\n  color: var(--warn);\n  font-size: 0.7rem;\n}\n\n.app-card {\n  position: relative;\n}\n\n.empty {\n  margin: 2.5rem 0;\n  color: var(--muted);\n  font-size: 0.9rem;\n  text-align: center;\n}\n\n/* ---------- typing ---------- */\n\n.type-card {\n  display: grid;\n  gap: 0.7rem;\n  margin-bottom: 0.9rem;\n  padding: 1rem;\n  border: 1px solid var(--line);\n  border-radius: var(--radius);\n  background: var(--surface);\n}\n\n.type-card label {\n  color: var(--muted);\n  font-size: 0.78rem;\n  font-weight: 600;\n  letter-spacing: 0.04em;\n  text-transform: uppercase;\n}\n\n.type-actions {\n  display: grid;\n  grid-template-columns: 2fr 1fr;\n  gap: 0.6rem;\n}\n\n.type-hint {\n  display: grid;\n  gap: 0.2rem;\n  padding: 0.85rem 1rem;\n  border: 1px solid var(--line);\n  border-radius: 16px;\n  background: rgba(124, 92, 255, 0.08);\n  font-size: 0.8rem;\n}\n\n.type-hint span {\n  color: var(--muted);\n}\n\n/* ---------- tab bar ---------- */\n\n.tabbar {\n  display: grid;\n  grid-template-columns: repeat(3, 1fr);\n  gap: 0.25rem;\n  padding: 0.5rem 0.75rem calc(0.5rem + env(safe-area-inset-bottom));\n  border-top: 1px solid var(--line);\n  background: rgba(10, 10, 16, 0.9);\n  backdrop-filter: blur(18px);\n}\n\n.tab {\n  display: grid;\n  gap: 0.2rem;\n  place-items: center;\n  padding: 0.5rem 0;\n  border-radius: 14px;\n  color: var(--muted);\n  font-size: 0.68rem;\n  font-weight: 600;\n  transition: color 0.15s var(--tap), background 0.15s var(--tap);\n}\n\n.tab.is-active {\n  color: var(--ink);\n  background: var(--surface);\n}\n\n.tab.is-active svg {\n  stroke: var(--accent);\n}\n\n/* ---------- toast ---------- */\n\n.toast {\n  position: fixed;\n  left: 50%;\n  bottom: calc(5.6rem + env(safe-area-inset-bottom));\n  z-index: 5;\n  max-width: min(22rem, calc(100vw - 2rem));\n  padding: 0.7rem 1rem;\n  border: 1px solid var(--line-strong);\n  border-radius: 14px;\n  background: rgba(22, 22, 32, 0.96);\n  backdrop-filter: blur(14px);\n  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);\n  font-size: 0.85rem;\n  text-align: center;\n  opacity: 0;\n  transform: translate(-50%, 10px);\n  pointer-events: none;\n  transition: opacity 0.2s var(--tap), transform 0.2s var(--tap);\n}\n\n.toast.is-visible {\n  opacity: 1;\n  transform: translate(-50%, 0);\n}\n\n.toast.is-error {\n  border-color: rgba(251, 113, 133, 0.5);\n  color: #ffd9de;\n}\n\n/* Landscape phones: the pad and the button rows sit side by side. */\n@media (orientation: landscape) and (max-height: 30rem) {\n  #pane-remote.is-active {\n    flex-direction: row;\n    align-items: center;\n    gap: 1rem;\n  }\n\n  .pad-stage {\n    flex: 0 0 auto;\n  }\n\n  .control-rows {\n    flex: 1 1 auto;\n    min-width: 0;\n  }\n\n  .dpad {\n    width: min(34vw, 11.5rem);\n  }\n\n  .rocker {\n    height: min(30vw, 10rem);\n  }\n\n  .tile {\n    min-height: 3.2rem;\n  }\n\n  .tile.ghost {\n    min-height: 2.9rem;\n  }\n\n  .topbar {\n    padding-block: 0.5rem;\n  }\n}\n\n@media (min-width: 34rem) {\n  .pane {\n    max-width: 34rem;\n    margin: 0 auto;\n  }\n}\n\n@media (prefers-reduced-motion: reduce) {\n  * {\n    animation: none !important;\n    transition: none !important;\n  }\n}\n';
-const appJs = "/* Relay phone remote client. Plain ES2019 so older phone browsers can run it. */\n;(function () {\n  'use strict'\n\n  var TOKEN_KEY = 'relay.token'\n  var byId = function (id) {\n    return document.getElementById(id)\n  }\n\n  var state = { snapshot: null, appQuery: '', pane: 'remote', busyPackage: null }\n  var stream = null\n  var toastTimer = null\n\n  /* ---------------- token handling ---------------- */\n\n  function readTokenFromUrl() {\n    var match = /[?&]t=([^&#]+)/.exec(window.location.search || '')\n    return match ? decodeURIComponent(match[1]) : ''\n  }\n\n  function storedToken() {\n    try {\n      return window.localStorage.getItem(TOKEN_KEY) || ''\n    } catch (error) {\n      return ''\n    }\n  }\n\n  function saveToken(token) {\n    try {\n      window.localStorage.setItem(TOKEN_KEY, token)\n    } catch (error) {\n      /* Private browsing: the token still lives in memory for this session. */\n    }\n  }\n\n  var token = readTokenFromUrl() || storedToken()\n\n  if (readTokenFromUrl()) {\n    saveToken(token)\n    // Keep the code out of the address bar once it is stored.\n    window.history.replaceState({}, '', window.location.pathname)\n  }\n\n  /* ---------------- transport ---------------- */\n\n  function request(path, body) {\n    return fetch(path, {\n      method: body ? 'POST' : 'GET',\n      headers: body\n        ? { 'Content-Type': 'application/json', 'X-Relay-Token': token }\n        : { 'X-Relay-Token': token },\n      body: body ? JSON.stringify(body) : undefined\n    }).then(function (response) {\n      if (response.status === 401) {\n        showGate('That code was not accepted.')\n        throw new Error('unauthorized')\n      }\n\n      return response.json().then(function (payload) {\n        if (!response.ok) {\n          throw new Error(payload && payload.error ? payload.error : 'Request failed.')\n        }\n        return payload\n      })\n    })\n  }\n\n  function openStream() {\n    if (stream) {\n      stream.close()\n    }\n\n    stream = new EventSource('/api/events?t=' + encodeURIComponent(token))\n    stream.onmessage = function (event) {\n      applySnapshot(JSON.parse(event.data))\n    }\n    stream.onerror = function () {\n      setConnectionDot('is-down', 'Reconnecting to the desktop app…')\n    }\n  }\n\n  /* ---------------- gate ---------------- */\n\n  function showGate(message) {\n    byId('gate').hidden = false\n    byId('app').hidden = true\n    byId('gate-error').textContent = message || ''\n\n    if (stream) {\n      stream.close()\n      stream = null\n    }\n  }\n\n  function showApp() {\n    byId('gate').hidden = true\n    byId('app').hidden = false\n  }\n\n  byId('gate-form').addEventListener('submit', function (event) {\n    event.preventDefault()\n    var value = byId('gate-input').value.trim().toUpperCase()\n\n    if (!value) {\n      return\n    }\n\n    token = value\n    request('/api/snapshot')\n      .then(function (snapshot) {\n        saveToken(token)\n        showApp()\n        applySnapshot(snapshot)\n        openStream()\n      })\n      .catch(function () {\n        /* showGate already reported the failure. */\n      })\n  })\n\n  /* ---------------- rendering ---------------- */\n\n  function setConnectionDot(className, detail) {\n    byId('status-dot').className = 'dot ' + className\n    if (detail) {\n      byId('device-detail').textContent = detail\n    }\n  }\n\n  function applySnapshot(snapshot) {\n    state.snapshot = snapshot\n\n    var connection = snapshot.connectionState || {}\n    var device = snapshot.device\n    var connected = connection.status === 'connected'\n    var backend = snapshot.activeBackend === 'native' ? 'Native Remote' : 'ADB'\n\n    byId('device-name').textContent = device ? device.name : 'No TV connected'\n\n    if (connected) {\n      setConnectionDot('is-live', device.host + ' · ' + backend)\n    } else if (connection.status === 'connecting' || connection.status === 'pairing') {\n      setConnectionDot('is-busy', 'Connecting…')\n    } else {\n      setConnectionDot(\n        'is-down',\n        connection.message || 'Connect a TV from the desktop app first'\n      )\n    }\n\n    renderApps()\n  }\n\n  function initials(name) {\n    return name\n      .split(/\\s+/)\n      .filter(Boolean)\n      .slice(0, 2)\n      .map(function (part) {\n        return part.charAt(0).toUpperCase()\n      })\n      .join('')\n  }\n\n  /** Stable per-package hue so icon-less apps stay distinguishable. */\n  function hueFor(packageName) {\n    var hash = 0\n\n    for (var index = 0; index < packageName.length; index += 1) {\n      hash = (hash * 31 + packageName.charCodeAt(index)) >>> 0\n    }\n\n    return hash % 360\n  }\n\n  function visibleApps() {\n    var snapshot = state.snapshot\n    if (!snapshot) {\n      return []\n    }\n\n    var query = state.appQuery.trim().toLowerCase()\n    var apps = snapshot.apps.filter(function (app) {\n      if (!query) {\n        return true\n      }\n      return (\n        app.displayName.toLowerCase().indexOf(query) !== -1 ||\n        app.packageName.toLowerCase().indexOf(query) !== -1\n      )\n    })\n\n    var recents = snapshot.recentApps || []\n    return apps.sort(function (left, right) {\n      if (left.favorite !== right.favorite) {\n        return left.favorite ? -1 : 1\n      }\n\n      var leftRecent = recents.indexOf(left.packageName)\n      var rightRecent = recents.indexOf(right.packageName)\n\n      if (leftRecent !== rightRecent) {\n        return (leftRecent === -1 ? 99 : leftRecent) - (rightRecent === -1 ? 99 : rightRecent)\n      }\n\n      return left.displayName.localeCompare(right.displayName)\n    })\n  }\n\n  function renderApps() {\n    var grid = byId('app-grid')\n    var empty = byId('app-empty')\n    var apps = visibleApps()\n\n    grid.textContent = ''\n\n    if (apps.length === 0) {\n      var snapshot = state.snapshot\n      empty.textContent = !snapshot || !snapshot.device\n        ? 'Connect a TV from the desktop app to browse its apps.'\n        : state.appQuery\n          ? 'No apps match that search.'\n          : 'No apps cached yet. Tap refresh to build the list.'\n      return\n    }\n\n    empty.textContent = ''\n\n    apps.forEach(function (app) {\n      var card = document.createElement('button')\n      card.type = 'button'\n      card.className = 'app-card' + (state.busyPackage === app.packageName ? ' is-busy' : '')\n      card.setAttribute('data-package', app.packageName)\n\n      if (app.hasIcon) {\n        var img = document.createElement('img')\n        img.src = '/api/icon?package=' + encodeURIComponent(app.packageName) + '&t=' + encodeURIComponent(token)\n        img.alt = ''\n        img.loading = 'lazy'\n        card.appendChild(img)\n      } else {\n        var fallback = document.createElement('div')\n        fallback.className = 'fallback'\n        fallback.style.setProperty('--hue', String(hueFor(app.packageName)))\n        fallback.textContent = initials(app.displayName)\n        card.appendChild(fallback)\n      }\n\n      var label = document.createElement('span')\n      label.textContent = app.displayName\n      card.appendChild(label)\n\n      if (app.favorite) {\n        var pin = document.createElement('em')\n        pin.className = 'pin'\n        pin.textContent = '★'\n        card.appendChild(pin)\n      }\n\n      grid.appendChild(card)\n    })\n  }\n\n  function toast(message, isError) {\n    var element = byId('toast')\n    element.textContent = message\n    element.className = 'toast is-visible' + (isError ? ' is-error' : '')\n\n    window.clearTimeout(toastTimer)\n    toastTimer = window.setTimeout(function () {\n      element.className = 'toast'\n    }, isError ? 3200 : 1600)\n  }\n\n  /** The gate already took over for a 401, so that case stays silent. */\n  function reportError(error) {\n    if (error && error.message !== 'unauthorized') {\n      toast(error.message, true)\n    }\n  }\n\n  function buzz(duration) {\n    if (navigator.vibrate) {\n      navigator.vibrate(duration || 8)\n    }\n  }\n\n  /* ---------------- actions ---------------- */\n\n  function sendKey(command) {\n    buzz()\n    request('/api/key', { command: command })\n      .then(function (payload) {\n        var feedback = payload.feedback\n        if (feedback && feedback.status === 'blocked') {\n          toast(feedback.title, true)\n        }\n      })\n      .catch(reportError)\n  }\n\n  document.addEventListener('click', function (event) {\n    if (!event.target || !event.target.closest) {\n      return\n    }\n\n    var keyTarget = event.target.closest('[data-key]')\n\n    if (keyTarget) {\n      sendKey(keyTarget.getAttribute('data-key'))\n      return\n    }\n\n    var appTarget = event.target.closest('[data-package]')\n\n    if (appTarget) {\n      var packageName = appTarget.getAttribute('data-package')\n      buzz(12)\n      state.busyPackage = packageName\n      renderApps()\n      request('/api/launch', { packageName: packageName })\n        .then(function () {\n          toast('Launching…')\n        })\n        .catch(reportError)\n        .then(function () {\n          state.busyPackage = null\n          renderApps()\n        })\n      return\n    }\n\n    var tab = event.target.closest('[data-pane]')\n    if (tab) {\n      selectPane(tab.getAttribute('data-pane'))\n    }\n  })\n\n  byId('power').addEventListener('click', function () {\n    sendKey('power')\n  })\n\n  byId('wake').addEventListener('click', function (event) {\n    event.stopPropagation()\n    buzz(12)\n    request('/api/wake', {})\n      .then(function () {\n        toast('Wake sent')\n      })\n      .catch(reportError)\n  })\n\n  byId('app-refresh').addEventListener('click', function () {\n    buzz(12)\n    toast('Refreshing apps…')\n    request('/api/apps/refresh', {})\n      .then(function (snapshot) {\n        applySnapshot(snapshot)\n        toast('Apps updated')\n      })\n      .catch(reportError)\n  })\n\n  byId('app-search').addEventListener('input', function (event) {\n    state.appQuery = event.target.value\n    renderApps()\n  })\n\n  byId('type-send').addEventListener('click', function () {\n    var input = byId('type-input')\n    var text = input.value\n\n    if (!text) {\n      return\n    }\n\n    buzz(12)\n    request('/api/text', { text: text })\n      .then(function () {\n        input.value = ''\n        toast('Text sent')\n      })\n      .catch(reportError)\n  })\n\n  byId('type-clear').addEventListener('click', function () {\n    byId('type-input').value = ''\n  })\n\n  function selectPane(name) {\n    state.pane = name\n\n    Array.prototype.forEach.call(document.querySelectorAll('.pane'), function (pane) {\n      pane.classList.toggle('is-active', pane.id === 'pane-' + name)\n    })\n\n    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {\n      var active = tab.getAttribute('data-pane') === name\n      tab.classList.toggle('is-active', active)\n      tab.setAttribute('aria-selected', active ? 'true' : 'false')\n    })\n  }\n\n  /* Swipe on the d-pad so flicking works like a trackpad. */\n  ;(function enableSwipe() {\n    var pad = document.querySelector('.dpad')\n    var start = null\n\n    pad.addEventListener(\n      'touchstart',\n      function (event) {\n        start = { x: event.touches[0].clientX, y: event.touches[0].clientY, time: Date.now() }\n      },\n      { passive: true }\n    )\n\n    pad.addEventListener(\n      'touchend',\n      function (event) {\n        if (!start) {\n          return\n        }\n\n        var touch = event.changedTouches[0]\n        var deltaX = touch.clientX - start.x\n        var deltaY = touch.clientY - start.y\n        var distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY)\n        var elapsed = Date.now() - start.time\n        start = null\n\n        // Below the threshold this is a tap, and the click handler owns it.\n        if (distance < 42 || elapsed > 600) {\n          return\n        }\n\n        event.preventDefault()\n\n        if (Math.abs(deltaX) > Math.abs(deltaY)) {\n          sendKey(deltaX > 0 ? 'right' : 'left')\n        } else {\n          sendKey(deltaY > 0 ? 'down' : 'up')\n        }\n      },\n      { passive: false }\n    )\n  })()\n\n  /* Reconnect the event stream when the phone comes back from sleep. */\n  document.addEventListener('visibilitychange', function () {\n    if (document.visibilityState === 'visible' && !byId('app').hidden) {\n      request('/api/snapshot').then(applySnapshot).catch(function () {})\n      openStream()\n    }\n  })\n\n  /* ---------------- boot ---------------- */\n\n  if (!token) {\n    showGate('')\n  } else {\n    request('/api/snapshot')\n      .then(function (snapshot) {\n        showApp()\n        applySnapshot(snapshot)\n        openStream()\n      })\n      .catch(function () {\n        /* showGate already ran for a 401. */\n      })\n  }\n})()\n";
-const manifest = '{\n  "name": "Relay Remote",\n  "short_name": "Relay",\n  "description": "Control your Android TV from your phone over the local network.",\n  "start_url": "/",\n  "scope": "/",\n  "display": "standalone",\n  "orientation": "portrait",\n  "background_color": "#08080d",\n  "theme_color": "#08080d",\n  "icons": [\n    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }\n  ]\n}\n';
-const iconSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">\n  <defs>\n    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">\n      <stop offset="0" stop-color="#7c5cff"/>\n      <stop offset="1" stop-color="#00d8c4"/>\n    </linearGradient>\n  </defs>\n  <rect width="512" height="512" rx="112" fill="url(#g)"/>\n  <rect x="136" y="168" width="240" height="152" rx="26" fill="none" stroke="#fff" stroke-width="26"/>\n  <path d="M196 132l60 48 60-48" fill="none" stroke="#fff" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>\n  <circle cx="256" cy="372" r="18" fill="#fff"/>\n</svg>\n';
+const appCss = '/* ==========================================================================\n   Relay phone remote — Ambient\n   Same room as the desktop app: warm near-black, one soft light each side,\n   one glass surface, ember as the only pressable colour.\n   ========================================================================== */\n\n:root {\n  color-scheme: dark;\n\n  --font-ui:\n    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", system-ui, sans-serif;\n  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;\n\n  --bg: #100e0e;\n  --surface: #1a1615;\n\n  --ink: #f6f1ee;\n  --dim: #b6a9a3;\n  --faint: #82736d;\n\n  --glass: rgba(255, 255, 255, 0.055);\n  --glass-2: rgba(255, 255, 255, 0.1);\n  --glass-line: rgba(255, 255, 255, 0.12);\n  --glass-line-strong: rgba(255, 255, 255, 0.22);\n\n  --ember: #ff7a59;\n  --ember-2: #ffb08a;\n  --ember-ink: #2a0d05;\n  --ember-soft: rgba(255, 122, 89, 0.15);\n\n  --live: #5fc8c3;\n  --warning: #f2b65a;\n  --danger: #ff5c7a;\n\n  --radius-xl: 26px;\n  --radius-lg: 20px;\n  --radius: 14px;\n\n  --ease: cubic-bezier(0.2, 0.9, 0.3, 1);\n\n  --safe-top: env(safe-area-inset-top, 0px);\n  --safe-bottom: env(safe-area-inset-bottom, 0px);\n}\n\n* {\n  box-sizing: border-box;\n  -webkit-tap-highlight-color: transparent;\n}\n\n/* The gate, the app and the more sheet are all toggled with [hidden], and the\n   display rules below would otherwise win over the UA default. */\n[hidden] {\n  display: none !important;\n}\n\nhtml,\nbody {\n  height: 100%;\n  margin: 0;\n  overscroll-behavior: none;\n}\n\nbody {\n  background: var(--bg);\n  color: var(--ink);\n  font-family: var(--font-ui);\n  font-size: 16px;\n  line-height: 1.45;\n  -webkit-font-smoothing: antialiased;\n}\n\nbutton {\n  font: inherit;\n  color: inherit;\n  border: 0;\n  background: none;\n  cursor: pointer;\n}\n\nbutton:disabled {\n  opacity: 0.4;\n}\n\nsvg {\n  display: block;\n  fill: none;\n  stroke: currentColor;\n  stroke-width: 1.8;\n  stroke-linecap: round;\n  stroke-linejoin: round;\n}\n\n/* Two soft lights behind everything. Fixed so the panes scroll over them. */\n.wash {\n  position: fixed;\n  inset: 0;\n  z-index: 0;\n  pointer-events: none;\n  overflow: hidden;\n}\n\n.wash::before,\n.wash::after {\n  content: "";\n  position: absolute;\n  border-radius: 50%;\n}\n\n.wash::before {\n  width: 560px;\n  height: 560px;\n  left: -180px;\n  top: -220px;\n  background: radial-gradient(circle, rgba(255, 122, 89, 0.32), rgba(255, 122, 89, 0) 68%);\n}\n\n.wash::after {\n  width: 520px;\n  height: 520px;\n  right: -190px;\n  bottom: -200px;\n  background: radial-gradient(circle, rgba(95, 200, 195, 0.22), rgba(95, 200, 195, 0) 68%);\n}\n\n/* ==========================================================================\n   Gate\n   ========================================================================== */\n\n.gate {\n  position: relative;\n  z-index: 1;\n  display: grid;\n  place-items: center;\n  min-height: 100dvh;\n  padding: 1.5rem;\n}\n\n.gate-card {\n  display: grid;\n  justify-items: center;\n  gap: 0.6rem;\n  width: 100%;\n  max-width: 21rem;\n  padding: 2rem 1.6rem 1.8rem;\n  border: 1px solid var(--glass-line);\n  border-radius: var(--radius-xl);\n  background: var(--glass);\n  backdrop-filter: blur(24px);\n  text-align: center;\n}\n\n.brand-mark {\n  display: grid;\n  place-items: center;\n  width: 3rem;\n  height: 3rem;\n  margin-bottom: 0.4rem;\n  border-radius: 1rem;\n  background: linear-gradient(150deg, var(--ember), #c2451f);\n}\n\n.brand-mark span {\n  display: block;\n  width: 0.7rem;\n  height: 0.7rem;\n  border-radius: 0.22rem;\n  background: var(--ember-ink);\n}\n\n.gate-card h1 {\n  margin: 0;\n  font-size: 1.5rem;\n  font-weight: 650;\n  letter-spacing: -0.02em;\n}\n\n.gate-card p {\n  margin: 0;\n  color: var(--dim);\n  font-size: 0.9rem;\n}\n\n#gate-form {\n  display: grid;\n  gap: 0.6rem;\n  width: 100%;\n  margin-top: 0.8rem;\n}\n\ninput,\ntextarea {\n  width: 100%;\n  padding: 0.8rem 1rem;\n  border: 1px solid var(--glass-line);\n  border-radius: var(--radius);\n  background: rgba(0, 0, 0, 0.28);\n  color: var(--ink);\n  font: inherit;\n}\n\ninput::placeholder,\ntextarea::placeholder {\n  color: var(--faint);\n}\n\ninput:focus,\ntextarea:focus {\n  outline: none;\n  border-color: var(--ember);\n}\n\n#gate-input {\n  font-family: var(--font-mono);\n  font-size: 1.2rem;\n  letter-spacing: 0.22em;\n  text-align: center;\n}\n\n.primary {\n  padding: 0.85rem 1.2rem;\n  border-radius: 999px;\n  background: var(--ember);\n  color: var(--ember-ink);\n  font-weight: 650;\n}\n\n.primary:active {\n  background: var(--ember-2);\n}\n\n.secondary {\n  padding: 0.85rem 1.2rem;\n  border: 1px solid var(--glass-line);\n  border-radius: 999px;\n  background: var(--glass);\n  color: var(--dim);\n  font-weight: 550;\n}\n\n.gate-error {\n  min-height: 1.2rem;\n  color: var(--danger);\n  font-size: 0.85rem;\n}\n\n/* ==========================================================================\n   Shell\n   ========================================================================== */\n\n.app {\n  position: relative;\n  z-index: 1;\n  display: grid;\n  grid-template-rows: auto minmax(0, 1fr) auto;\n  height: 100dvh;\n  padding: calc(var(--safe-top) + 0.7rem) 0.9rem calc(var(--safe-bottom) + 0.7rem);\n  gap: 0.7rem;\n}\n\n/* --- now playing header ------------------------------------------------ */\n\n.topbar {\n  display: flex;\n  align-items: center;\n  gap: 0.75rem;\n  padding: 0.55rem 0.7rem;\n  border: 1px solid var(--glass-line);\n  border-radius: var(--radius-lg);\n  background: var(--glass);\n  backdrop-filter: blur(20px);\n}\n\n.now-art {\n  display: grid;\n  place-items: center;\n  flex: none;\n  width: 2.9rem;\n  height: 2.9rem;\n  border-radius: 0.85rem;\n  overflow: hidden;\n  background: linear-gradient(150deg, hsl(var(--hue, 18) 58% 48%), hsl(var(--hue, 18) 62% 26%));\n  color: #fff;\n  font-size: 0.95rem;\n  font-weight: 650;\n}\n\n.now-art img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n}\n\n.now-art.is-idle {\n  background: var(--glass-2);\n  color: var(--faint);\n}\n\n.now-art.is-idle svg {\n  width: 1.3rem;\n  height: 1.3rem;\n}\n\n.now-copy {\n  display: grid;\n  gap: 0.1rem;\n  min-width: 0;\n  flex: 1;\n}\n\n.now-copy strong {\n  font-size: 1rem;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.now-copy small {\n  display: flex;\n  align-items: center;\n  gap: 0.4rem;\n  color: var(--faint);\n  font-size: 0.78rem;\n  min-width: 0;\n}\n\n.now-copy small span:last-child {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.dot {\n  flex: none;\n  width: 7px;\n  height: 7px;\n  border-radius: 50%;\n  background: var(--faint);\n}\n\n.dot.is-live {\n  background: var(--live);\n  box-shadow: 0 0 9px var(--live);\n}\n\n.dot.is-busy {\n  background: var(--warning);\n}\n\n.dot.is-down {\n  background: var(--danger);\n}\n\n.icon-button {\n  display: grid;\n  place-items: center;\n  flex: none;\n  width: 2.5rem;\n  height: 2.5rem;\n  border: 1px solid var(--glass-line);\n  border-radius: 50%;\n  background: var(--glass);\n  color: var(--dim);\n}\n\n.icon-button svg {\n  width: 1.15rem;\n  height: 1.15rem;\n}\n\n.icon-button.danger {\n  border-color: rgba(255, 92, 122, 0.3);\n  color: var(--danger);\n}\n\n.icon-button:active {\n  background: var(--glass-2);\n}\n\n/* --- panes -------------------------------------------------------------- */\n\n.panes {\n  position: relative;\n  min-height: 0;\n}\n\n.pane {\n  display: none;\n  height: 100%;\n  overflow-y: auto;\n  -webkit-overflow-scrolling: touch;\n}\n\n.pane.is-active {\n  display: flex;\n  flex-direction: column;\n  gap: 0.8rem;\n}\n\n/* ==========================================================================\n   Remote pane\n   ========================================================================== */\n\n.pad-stage {\n  display: grid;\n  justify-items: center;\n  gap: 0.7rem;\n  flex: 1;\n  align-content: center;\n  min-height: 0;\n}\n\n.softpad {\n  position: relative;\n  display: grid;\n  place-items: center;\n  width: min(72vw, 17rem);\n  aspect-ratio: 1;\n  border-radius: 50%;\n  border: 1px solid rgba(255, 255, 255, 0.14);\n  background: radial-gradient(\n    circle at 50% 34%,\n    rgba(255, 255, 255, 0.13),\n    rgba(255, 255, 255, 0.02) 62%\n  );\n  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.16);\n  touch-action: none;\n}\n\n.softpad-dir {\n  position: absolute;\n  display: grid;\n  place-items: center;\n  width: 3.6rem;\n  height: 3.6rem;\n  border-radius: 50%;\n  color: rgba(255, 255, 255, 0.4);\n}\n\n.softpad-dir svg {\n  width: 1.35rem;\n  height: 1.35rem;\n}\n\n.softpad-dir:active {\n  background: rgba(255, 255, 255, 0.1);\n  color: var(--ink);\n}\n\n.softpad-dir.up {\n  top: 0.3rem;\n  left: 50%;\n  transform: translateX(-50%);\n}\n\n.softpad-dir.down {\n  bottom: 0.3rem;\n  left: 50%;\n  transform: translateX(-50%);\n}\n\n.softpad-dir.left {\n  left: 0.3rem;\n  top: 50%;\n  transform: translateY(-50%);\n}\n\n.softpad-dir.right {\n  right: 0.3rem;\n  top: 50%;\n  transform: translateY(-50%);\n}\n\n.softpad-ok {\n  display: grid;\n  place-items: center;\n  width: 42%;\n  aspect-ratio: 1;\n  border-radius: 50%;\n  background: rgba(255, 255, 255, 0.94);\n  color: #171110;\n  font-size: 0.95rem;\n  font-weight: 700;\n  letter-spacing: 0.14em;\n  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);\n  transition: transform 0.1s var(--ease);\n}\n\n.softpad-ok:active {\n  transform: scale(0.95);\n}\n\n.pad-hint {\n  margin: 0;\n  color: var(--faint);\n  font-size: 0.78rem;\n}\n\n.quick-row {\n  display: grid;\n  grid-template-columns: repeat(3, minmax(0, 1fr));\n  gap: 0.5rem;\n}\n\n.quick {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  gap: 0.45rem;\n  padding: 0.85rem 0.5rem;\n  border: 1px solid var(--glass-line);\n  border-radius: 999px;\n  background: var(--glass);\n  color: var(--dim);\n  font-size: 0.88rem;\n  font-weight: 550;\n}\n\n.quick svg {\n  width: 1.05rem;\n  height: 1.05rem;\n}\n\n.quick:active {\n  background: var(--glass-2);\n  color: var(--ink);\n}\n\n.quick.accent {\n  border-color: transparent;\n  background: var(--ember);\n  color: var(--ember-ink);\n  font-weight: 650;\n}\n\n.quick.accent:active {\n  background: var(--ember-2);\n}\n\n.vol-row {\n  display: grid;\n  grid-template-columns: 1fr auto 1fr auto;\n  align-items: center;\n  gap: 0.5rem;\n  padding: 0.35rem;\n  border: 1px solid var(--glass-line);\n  border-radius: 999px;\n  background: var(--glass);\n}\n\n.vol {\n  display: grid;\n  place-items: center;\n  height: 2.8rem;\n  border-radius: 999px;\n  color: var(--dim);\n}\n\n.vol svg {\n  width: 1.25rem;\n  height: 1.25rem;\n}\n\n.vol:active {\n  background: var(--glass-2);\n  color: var(--ink);\n}\n\n.vol-label {\n  padding: 0 0.2rem;\n  color: var(--faint);\n  font-size: 0.62rem;\n  font-weight: 650;\n  letter-spacing: 0.16em;\n}\n\n.vol-row .vol:last-child {\n  border-left: 1px solid var(--glass-line);\n}\n\n.more-trigger {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  gap: 0.5rem;\n  padding: 0.7rem;\n  border-radius: 999px;\n  color: var(--faint);\n  font-size: 0.85rem;\n}\n\n.more-trigger svg {\n  width: 1.1rem;\n  height: 1.1rem;\n  fill: currentColor;\n  stroke: none;\n}\n\n.more-trigger[aria-expanded="true"] {\n  color: var(--ink);\n}\n\n.more-sheet {\n  display: grid;\n  gap: 0.5rem;\n  padding-bottom: 0.3rem;\n}\n\n.row {\n  display: grid;\n  gap: 0.5rem;\n}\n\n.row.three {\n  grid-template-columns: repeat(3, minmax(0, 1fr));\n}\n\n.row.four {\n  grid-template-columns: repeat(4, minmax(0, 1fr));\n}\n\n.tile {\n  display: grid;\n  place-items: center;\n  padding: 0.85rem 0.3rem;\n  border: 1px solid var(--glass-line);\n  border-radius: var(--radius);\n  background: var(--glass);\n  color: var(--dim);\n  font-size: 0.82rem;\n  font-weight: 550;\n}\n\n.tile:active {\n  background: var(--glass-2);\n  color: var(--ink);\n}\n\n/* ==========================================================================\n   Apps pane\n   ========================================================================== */\n\n.pane-head {\n  display: flex;\n  align-items: center;\n  gap: 0.5rem;\n  padding-bottom: 0.1rem;\n}\n\n.search {\n  display: flex;\n  align-items: center;\n  gap: 0.5rem;\n  flex: 1;\n  padding: 0 0.9rem;\n  border: 1px solid var(--glass-line);\n  border-radius: 999px;\n  background: var(--glass);\n  color: var(--faint);\n}\n\n.search svg {\n  flex: none;\n  width: 1.05rem;\n  height: 1.05rem;\n}\n\n.search input {\n  border: 0;\n  background: none;\n  padding: 0.7rem 0;\n  font-size: 0.95rem;\n}\n\n.search input:focus {\n  border: 0;\n}\n\n.app-grid {\n  display: grid;\n  grid-template-columns: repeat(auto-fill, minmax(5.4rem, 1fr));\n  gap: 0.6rem;\n  padding-bottom: 0.5rem;\n}\n\n.app-card {\n  position: relative;\n  display: grid;\n  justify-items: center;\n  gap: 0.4rem;\n  padding: 0.8rem 0.35rem 0.7rem;\n  border: 1px solid var(--glass-line);\n  border-radius: var(--radius-lg);\n  background: var(--glass);\n  color: var(--ink);\n  text-align: center;\n}\n\n.app-card:active {\n  background: var(--glass-2);\n}\n\n.app-card.is-busy {\n  opacity: 0.5;\n}\n\n.app-card img,\n.app-card .fallback {\n  width: 2.9rem;\n  height: 2.9rem;\n  border-radius: 0.85rem;\n  object-fit: cover;\n}\n\n.app-card .fallback {\n  display: grid;\n  place-items: center;\n  background: linear-gradient(150deg, hsl(var(--hue) 58% 48%), hsl(var(--hue) 62% 26%));\n  color: #fff;\n  font-size: 0.9rem;\n  font-weight: 650;\n}\n\n.app-card span {\n  font-size: 0.76rem;\n  line-height: 1.25;\n  overflow-wrap: anywhere;\n}\n\n.app-card .pin {\n  position: absolute;\n  top: 0.35rem;\n  right: 0.45rem;\n  color: var(--ember);\n  font-size: 0.7rem;\n  font-style: normal;\n}\n\n.empty {\n  margin: 0;\n  padding: 1.5rem 0.5rem;\n  color: var(--faint);\n  font-size: 0.88rem;\n  text-align: center;\n}\n\n/* ==========================================================================\n   Type pane\n   ========================================================================== */\n\n.type-card {\n  display: grid;\n  gap: 0.6rem;\n  padding: 1rem;\n  border: 1px solid var(--glass-line);\n  border-radius: var(--radius-lg);\n  background: var(--glass);\n  backdrop-filter: blur(20px);\n}\n\n.type-card label {\n  color: var(--dim);\n  font-size: 0.85rem;\n}\n\n.type-actions {\n  display: grid;\n  grid-template-columns: 1fr auto;\n  gap: 0.5rem;\n}\n\n.type-hint {\n  display: grid;\n  gap: 0.15rem;\n  padding: 0.85rem 1rem;\n  border-radius: var(--radius);\n  background: rgba(0, 0, 0, 0.22);\n  font-size: 0.82rem;\n}\n\n.type-hint strong {\n  color: var(--ink);\n}\n\n.type-hint span {\n  color: var(--faint);\n}\n\n/* ==========================================================================\n   Tab bar and toast\n   ========================================================================== */\n\n.tabbar {\n  display: grid;\n  grid-template-columns: repeat(3, minmax(0, 1fr));\n  gap: 2px;\n  padding: 4px;\n  border: 1px solid var(--glass-line);\n  border-radius: 999px;\n  background: var(--glass);\n  backdrop-filter: blur(20px);\n}\n\n.tab {\n  padding: 0.65rem 0;\n  border-radius: 999px;\n  color: var(--dim);\n  font-size: 0.88rem;\n  font-weight: 550;\n}\n\n.tab.is-active {\n  background: var(--ink);\n  color: #171110;\n  font-weight: 650;\n}\n\n.toast {\n  position: fixed;\n  left: 50%;\n  bottom: calc(var(--safe-bottom) + 5.2rem);\n  z-index: 20;\n  transform: translate(-50%, 8px);\n  padding: 0.6rem 1.1rem;\n  border: 1px solid var(--glass-line);\n  border-radius: 999px;\n  background: var(--surface);\n  color: var(--ink);\n  font-size: 0.85rem;\n  opacity: 0;\n  pointer-events: none;\n  transition: opacity 0.18s var(--ease), transform 0.18s var(--ease);\n}\n\n.toast.is-visible {\n  opacity: 1;\n  transform: translate(-50%, 0);\n}\n\n.toast.is-error {\n  border-color: var(--danger);\n  color: var(--danger);\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .toast,\n  .softpad-ok {\n    transition: none;\n  }\n}\n\n/* Short phones: give the pad less room rather than clipping the controls. */\n@media (max-height: 700px) {\n  .softpad {\n    width: min(58vw, 13.5rem);\n  }\n\n  .quick {\n    padding: 0.7rem 0.5rem;\n  }\n}\n';
+const appJs = `/* Relay phone remote client. Plain ES2019 so older phone browsers can run it. */
+;(function () {
+  'use strict'
+
+  var TOKEN_KEY = 'relay.token'
+  var byId = function (id) {
+    return document.getElementById(id)
+  }
+
+  var state = { snapshot: null, appQuery: '', pane: 'remote', busyPackage: null }
+  var stream = null
+  var toastTimer = null
+
+  /* ---------------- token handling ---------------- */
+
+  function readTokenFromUrl() {
+    var match = /[?&]t=([^&#]+)/.exec(window.location.search || '')
+    return match ? decodeURIComponent(match[1]) : ''
+  }
+
+  function storedToken() {
+    try {
+      return window.localStorage.getItem(TOKEN_KEY) || ''
+    } catch (error) {
+      return ''
+    }
+  }
+
+  function saveToken(token) {
+    try {
+      window.localStorage.setItem(TOKEN_KEY, token)
+    } catch (error) {
+      /* Private browsing: the token still lives in memory for this session. */
+    }
+  }
+
+  var token = readTokenFromUrl() || storedToken()
+
+  if (readTokenFromUrl()) {
+    saveToken(token)
+    // Keep the code out of the address bar once it is stored.
+    window.history.replaceState({}, '', window.location.pathname)
+  }
+
+  /* ---------------- transport ---------------- */
+
+  function request(path, body) {
+    return fetch(path, {
+      method: body ? 'POST' : 'GET',
+      headers: body
+        ? { 'Content-Type': 'application/json', 'X-Relay-Token': token }
+        : { 'X-Relay-Token': token },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (response) {
+      if (response.status === 401) {
+        showGate('That code was not accepted.')
+        throw new Error('unauthorized')
+      }
+
+      return response.json().then(function (payload) {
+        if (!response.ok) {
+          throw new Error(payload && payload.error ? payload.error : 'Request failed.')
+        }
+        return payload
+      })
+    })
+  }
+
+  function openStream() {
+    if (stream) {
+      stream.close()
+    }
+
+    stream = new EventSource('/api/events?t=' + encodeURIComponent(token))
+    stream.onmessage = function (event) {
+      applySnapshot(JSON.parse(event.data))
+    }
+    stream.onerror = function () {
+      setConnectionDot('is-down', 'Reconnecting to the desktop app…')
+    }
+  }
+
+  /* ---------------- gate ---------------- */
+
+  function showGate(message) {
+    byId('gate').hidden = false
+    byId('app').hidden = true
+    byId('gate-error').textContent = message || ''
+
+    if (stream) {
+      stream.close()
+      stream = null
+    }
+  }
+
+  function showApp() {
+    byId('gate').hidden = true
+    byId('app').hidden = false
+  }
+
+  byId('gate-form').addEventListener('submit', function (event) {
+    event.preventDefault()
+    var value = byId('gate-input').value.trim().toUpperCase()
+
+    if (!value) {
+      return
+    }
+
+    token = value
+    request('/api/snapshot')
+      .then(function (snapshot) {
+        saveToken(token)
+        showApp()
+        applySnapshot(snapshot)
+        openStream()
+      })
+      .catch(function () {
+        /* showGate already reported the failure. */
+      })
+  })
+
+  /* ---------------- rendering ---------------- */
+
+  function setConnectionDot(className, detail) {
+    byId('status-dot').className = 'dot ' + className
+    if (detail) {
+      byId('now-detail-text').textContent = detail
+    }
+  }
+
+  /** The art tile only ever shows an icon the desktop already cached. */
+  function paintNowArt(app) {
+    var art = byId('now-art')
+    art.textContent = ''
+    art.style.removeProperty('--hue')
+
+    if (!app) {
+      art.className = 'now-art is-idle'
+      art.innerHTML =
+        '<svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8"/></svg>'
+      return
+    }
+
+    art.className = 'now-art'
+
+    var apps = state.snapshot && state.snapshot.apps ? state.snapshot.apps : []
+    var known = null
+
+    for (var index = 0; index < apps.length; index += 1) {
+      if (apps[index].packageName === app.packageName) {
+        known = apps[index]
+        break
+      }
+    }
+
+    if (known && known.hasIcon) {
+      var img = document.createElement('img')
+      img.src =
+        '/api/icon?package=' +
+        encodeURIComponent(app.packageName) +
+        '&t=' +
+        encodeURIComponent(token)
+      img.alt = ''
+      art.appendChild(img)
+      return
+    }
+
+    art.style.setProperty('--hue', String(hueFor(app.packageName)))
+    art.textContent = initials(app.displayName)
+  }
+
+  function applySnapshot(snapshot) {
+    state.snapshot = snapshot
+
+    var connection = snapshot.connectionState || {}
+    var device = snapshot.device
+    var connected = connection.status === 'connected'
+    var backend = snapshot.activeBackend === 'native' ? 'Native Remote' : 'ADB'
+
+    // The app on screen leads; the TV name drops to the line underneath it.
+    var foreground = connected ? snapshot.foregroundApp : null
+
+    if (connected) {
+      byId('now-title').textContent = foreground ? foreground.displayName : device.name
+      setConnectionDot('is-live', (foreground ? device.name : device.host) + ' · ' + backend)
+    } else if (connection.status === 'connecting' || connection.status === 'pairing') {
+      byId('now-title').textContent = device ? device.name : 'Connecting'
+      setConnectionDot('is-busy', 'Connecting…')
+    } else {
+      byId('now-title').textContent = device ? device.name : 'No TV connected'
+      setConnectionDot('is-down', connection.message || 'Connect a TV from the desktop app first')
+    }
+
+    paintNowArt(foreground)
+    renderApps()
+  }
+
+  function initials(name) {
+    return name
+      .split(/\\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(function (part) {
+        return part.charAt(0).toUpperCase()
+      })
+      .join('')
+  }
+
+  /** Stable per-package hue so icon-less apps stay distinguishable. */
+  function hueFor(packageName) {
+    var hash = 0
+
+    for (var index = 0; index < packageName.length; index += 1) {
+      hash = (hash * 31 + packageName.charCodeAt(index)) >>> 0
+    }
+
+    return hash % 360
+  }
+
+  function visibleApps() {
+    var snapshot = state.snapshot
+    if (!snapshot) {
+      return []
+    }
+
+    var query = state.appQuery.trim().toLowerCase()
+    var apps = snapshot.apps.filter(function (app) {
+      if (!query) {
+        return true
+      }
+      return (
+        app.displayName.toLowerCase().indexOf(query) !== -1 ||
+        app.packageName.toLowerCase().indexOf(query) !== -1
+      )
+    })
+
+    var recents = snapshot.recentApps || []
+    return apps.sort(function (left, right) {
+      if (left.favorite !== right.favorite) {
+        return left.favorite ? -1 : 1
+      }
+
+      var leftRecent = recents.indexOf(left.packageName)
+      var rightRecent = recents.indexOf(right.packageName)
+
+      if (leftRecent !== rightRecent) {
+        return (leftRecent === -1 ? 99 : leftRecent) - (rightRecent === -1 ? 99 : rightRecent)
+      }
+
+      return left.displayName.localeCompare(right.displayName)
+    })
+  }
+
+  function renderApps() {
+    var grid = byId('app-grid')
+    var empty = byId('app-empty')
+    var apps = visibleApps()
+
+    grid.textContent = ''
+
+    if (apps.length === 0) {
+      var snapshot = state.snapshot
+      empty.textContent = !snapshot || !snapshot.device
+        ? 'Connect a TV from the desktop app to browse its apps.'
+        : state.appQuery
+          ? 'No apps match that search.'
+          : 'No apps cached yet. Tap refresh to build the list.'
+      return
+    }
+
+    empty.textContent = ''
+
+    apps.forEach(function (app) {
+      var card = document.createElement('button')
+      card.type = 'button'
+      card.className = 'app-card' + (state.busyPackage === app.packageName ? ' is-busy' : '')
+      card.setAttribute('data-package', app.packageName)
+
+      if (app.hasIcon) {
+        var img = document.createElement('img')
+        img.src = '/api/icon?package=' + encodeURIComponent(app.packageName) + '&t=' + encodeURIComponent(token)
+        img.alt = ''
+        img.loading = 'lazy'
+        card.appendChild(img)
+      } else {
+        var fallback = document.createElement('div')
+        fallback.className = 'fallback'
+        fallback.style.setProperty('--hue', String(hueFor(app.packageName)))
+        fallback.textContent = initials(app.displayName)
+        card.appendChild(fallback)
+      }
+
+      var label = document.createElement('span')
+      label.textContent = app.displayName
+      card.appendChild(label)
+
+      if (app.favorite) {
+        var pin = document.createElement('em')
+        pin.className = 'pin'
+        pin.textContent = '★'
+        card.appendChild(pin)
+      }
+
+      grid.appendChild(card)
+    })
+  }
+
+  function toast(message, isError) {
+    var element = byId('toast')
+    element.textContent = message
+    element.className = 'toast is-visible' + (isError ? ' is-error' : '')
+
+    window.clearTimeout(toastTimer)
+    toastTimer = window.setTimeout(function () {
+      element.className = 'toast'
+    }, isError ? 3200 : 1600)
+  }
+
+  /** The gate already took over for a 401, so that case stays silent. */
+  function reportError(error) {
+    if (error && error.message !== 'unauthorized') {
+      toast(error.message, true)
+    }
+  }
+
+  function buzz(duration) {
+    if (navigator.vibrate) {
+      navigator.vibrate(duration || 8)
+    }
+  }
+
+  /* ---------------- actions ---------------- */
+
+  function sendKey(command) {
+    buzz()
+    request('/api/key', { command: command })
+      .then(function (payload) {
+        var feedback = payload.feedback
+        if (feedback && feedback.status === 'blocked') {
+          toast(feedback.title, true)
+        }
+      })
+      .catch(reportError)
+  }
+
+  document.addEventListener('click', function (event) {
+    if (!event.target || !event.target.closest) {
+      return
+    }
+
+    var keyTarget = event.target.closest('[data-key]')
+
+    if (keyTarget) {
+      sendKey(keyTarget.getAttribute('data-key'))
+      return
+    }
+
+    var appTarget = event.target.closest('[data-package]')
+
+    if (appTarget) {
+      var packageName = appTarget.getAttribute('data-package')
+      buzz(12)
+      state.busyPackage = packageName
+      renderApps()
+      request('/api/launch', { packageName: packageName })
+        .then(function () {
+          toast('Launching…')
+        })
+        .catch(reportError)
+        .then(function () {
+          state.busyPackage = null
+          renderApps()
+        })
+      return
+    }
+
+    var tab = event.target.closest('[data-pane]')
+    if (tab) {
+      selectPane(tab.getAttribute('data-pane'))
+    }
+  })
+
+  byId('power').addEventListener('click', function () {
+    sendKey('power')
+  })
+
+  /* The one place the calm surface hides things, and it is never more than a tap
+     away. Everything in here still reaches the TV through the desktop app. */
+  byId('more').addEventListener('click', function () {
+    var sheet = byId('more-sheet')
+    var opening = sheet.hidden
+
+    sheet.hidden = !opening
+    byId('more').setAttribute('aria-expanded', opening ? 'true' : 'false')
+  })
+
+  byId('wake').addEventListener('click', function (event) {
+    event.stopPropagation()
+    buzz(12)
+    request('/api/wake', {})
+      .then(function () {
+        toast('Wake sent')
+      })
+      .catch(reportError)
+  })
+
+  byId('app-refresh').addEventListener('click', function () {
+    buzz(12)
+    toast('Refreshing apps…')
+    request('/api/apps/refresh', {})
+      .then(function (snapshot) {
+        applySnapshot(snapshot)
+        toast('Apps updated')
+      })
+      .catch(reportError)
+  })
+
+  byId('app-search').addEventListener('input', function (event) {
+    state.appQuery = event.target.value
+    renderApps()
+  })
+
+  byId('type-send').addEventListener('click', function () {
+    var input = byId('type-input')
+    var text = input.value
+
+    if (!text) {
+      return
+    }
+
+    buzz(12)
+    request('/api/text', { text: text })
+      .then(function () {
+        input.value = ''
+        toast('Text sent')
+      })
+      .catch(reportError)
+  })
+
+  byId('type-clear').addEventListener('click', function () {
+    byId('type-input').value = ''
+  })
+
+  function selectPane(name) {
+    state.pane = name
+
+    Array.prototype.forEach.call(document.querySelectorAll('.pane'), function (pane) {
+      pane.classList.toggle('is-active', pane.id === 'pane-' + name)
+    })
+
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
+      var active = tab.getAttribute('data-pane') === name
+      tab.classList.toggle('is-active', active)
+      tab.setAttribute('aria-selected', active ? 'true' : 'false')
+    })
+  }
+
+  /* Swipe on the d-pad so flicking works like a trackpad. */
+  ;(function enableSwipe() {
+    var pad = document.querySelector('.softpad')
+    var start = null
+
+    pad.addEventListener(
+      'touchstart',
+      function (event) {
+        start = { x: event.touches[0].clientX, y: event.touches[0].clientY, time: Date.now() }
+      },
+      { passive: true }
+    )
+
+    pad.addEventListener(
+      'touchend',
+      function (event) {
+        if (!start) {
+          return
+        }
+
+        var touch = event.changedTouches[0]
+        var deltaX = touch.clientX - start.x
+        var deltaY = touch.clientY - start.y
+        var distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY)
+        var elapsed = Date.now() - start.time
+        start = null
+
+        // Below the threshold this is a tap, and the click handler owns it.
+        if (distance < 42 || elapsed > 600) {
+          return
+        }
+
+        event.preventDefault()
+
+        if (Math.abs(deltaX) > Math.abs(deltaY)) {
+          sendKey(deltaX > 0 ? 'right' : 'left')
+        } else {
+          sendKey(deltaY > 0 ? 'down' : 'up')
+        }
+      },
+      { passive: false }
+    )
+  })()
+
+  /* Keep the now-playing header fresh. The desktop reports the app it last
+     polled, so this reads a cached value and never touches the TV itself. */
+  var snapshotPending = false
+
+  window.setInterval(function () {
+    if (snapshotPending || byId('app').hidden || document.visibilityState !== 'visible') {
+      return
+    }
+
+    snapshotPending = true
+    request('/api/snapshot')
+      .then(applySnapshot)
+      .catch(function () {
+        /* A dropped desktop app already shows through the connection dot. */
+      })
+      .then(function () {
+        snapshotPending = false
+      })
+  }, 10000)
+
+  /* Reconnect the event stream when the phone comes back from sleep. */
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && !byId('app').hidden) {
+      request('/api/snapshot').then(applySnapshot).catch(function () {})
+      openStream()
+    }
+  })
+
+  /* ---------------- boot ---------------- */
+
+  if (!token) {
+    showGate('')
+  } else {
+    request('/api/snapshot')
+      .then(function (snapshot) {
+        showApp()
+        applySnapshot(snapshot)
+        openStream()
+      })
+      .catch(function () {
+        /* showGate already ran for a 401. */
+      })
+  }
+})()
+`;
+const manifest = '{\n  "name": "Relay Remote",\n  "short_name": "Relay",\n  "description": "Control your Android TV from your phone over the local network.",\n  "start_url": "/",\n  "scope": "/",\n  "display": "standalone",\n  "orientation": "portrait",\n  "background_color": "#100e0e",\n  "theme_color": "#100e0e",\n  "icons": [\n    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }\n  ]\n}\n';
+const iconSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">\n  <defs>\n    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">\n      <stop offset="0" stop-color="#ff7a59"/>\n      <stop offset="1" stop-color="#c2451f"/>\n    </linearGradient>\n  </defs>\n  <rect width="512" height="512" rx="112" fill="#100e0e"/>\n  <circle cx="256" cy="256" r="168" fill="url(#g)"/>\n  <circle cx="256" cy="256" r="72" fill="#100e0e"/>\n</svg>\n';
 const WEB_ASSETS = {
   "/index.html": { body: indexHtml, contentType: "text/html; charset=utf-8" },
   "/app.css": { body: appCss, contentType: "text/css; charset=utf-8" },
@@ -3915,6 +4478,8 @@ class WebRemoteServer extends EventEmitter {
       })),
       capabilities,
       apps,
+      // Whatever the desktop poll last saw. Never issues a fresh ADB call here.
+      foregroundApp: this.options.appController.getCachedForegroundApp(),
       recentApps: (activeDevice?.recentApps ?? []).map((entry) => entry.packageName),
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
@@ -3943,7 +4508,7 @@ async function createMainWindow() {
     height: 940,
     minWidth: 1100,
     minHeight: 760,
-    backgroundColor: "#f4ede1",
+    backgroundColor: "#100e0e",
     titleBarStyle: "hiddenInset",
     webPreferences: {
       preload,

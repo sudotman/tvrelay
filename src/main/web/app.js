@@ -124,8 +124,49 @@
   function setConnectionDot(className, detail) {
     byId('status-dot').className = 'dot ' + className
     if (detail) {
-      byId('device-detail').textContent = detail
+      byId('now-detail-text').textContent = detail
     }
+  }
+
+  /** The art tile only ever shows an icon the desktop already cached. */
+  function paintNowArt(app) {
+    var art = byId('now-art')
+    art.textContent = ''
+    art.style.removeProperty('--hue')
+
+    if (!app) {
+      art.className = 'now-art is-idle'
+      art.innerHTML =
+        '<svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8"/></svg>'
+      return
+    }
+
+    art.className = 'now-art'
+
+    var apps = state.snapshot && state.snapshot.apps ? state.snapshot.apps : []
+    var known = null
+
+    for (var index = 0; index < apps.length; index += 1) {
+      if (apps[index].packageName === app.packageName) {
+        known = apps[index]
+        break
+      }
+    }
+
+    if (known && known.hasIcon) {
+      var img = document.createElement('img')
+      img.src =
+        '/api/icon?package=' +
+        encodeURIComponent(app.packageName) +
+        '&t=' +
+        encodeURIComponent(token)
+      img.alt = ''
+      art.appendChild(img)
+      return
+    }
+
+    art.style.setProperty('--hue', String(hueFor(app.packageName)))
+    art.textContent = initials(app.displayName)
   }
 
   function applySnapshot(snapshot) {
@@ -136,19 +177,21 @@
     var connected = connection.status === 'connected'
     var backend = snapshot.activeBackend === 'native' ? 'Native Remote' : 'ADB'
 
-    byId('device-name').textContent = device ? device.name : 'No TV connected'
+    // The app on screen leads; the TV name drops to the line underneath it.
+    var foreground = connected ? snapshot.foregroundApp : null
 
     if (connected) {
-      setConnectionDot('is-live', device.host + ' · ' + backend)
+      byId('now-title').textContent = foreground ? foreground.displayName : device.name
+      setConnectionDot('is-live', (foreground ? device.name : device.host) + ' · ' + backend)
     } else if (connection.status === 'connecting' || connection.status === 'pairing') {
+      byId('now-title').textContent = device ? device.name : 'Connecting'
       setConnectionDot('is-busy', 'Connecting…')
     } else {
-      setConnectionDot(
-        'is-down',
-        connection.message || 'Connect a TV from the desktop app first'
-      )
+      byId('now-title').textContent = device ? device.name : 'No TV connected'
+      setConnectionDot('is-down', connection.message || 'Connect a TV from the desktop app first')
     }
 
+    paintNowArt(foreground)
     renderApps()
   }
 
@@ -341,6 +384,16 @@
     sendKey('power')
   })
 
+  /* The one place the calm surface hides things, and it is never more than a tap
+     away. Everything in here still reaches the TV through the desktop app. */
+  byId('more').addEventListener('click', function () {
+    var sheet = byId('more-sheet')
+    var opening = sheet.hidden
+
+    sheet.hidden = !opening
+    byId('more').setAttribute('aria-expanded', opening ? 'true' : 'false')
+  })
+
   byId('wake').addEventListener('click', function (event) {
     event.stopPropagation()
     buzz(12)
@@ -404,7 +457,7 @@
 
   /* Swipe on the d-pad so flicking works like a trackpad. */
   ;(function enableSwipe() {
-    var pad = document.querySelector('.dpad')
+    var pad = document.querySelector('.softpad')
     var start = null
 
     pad.addEventListener(
@@ -445,6 +498,26 @@
       { passive: false }
     )
   })()
+
+  /* Keep the now-playing header fresh. The desktop reports the app it last
+     polled, so this reads a cached value and never touches the TV itself. */
+  var snapshotPending = false
+
+  window.setInterval(function () {
+    if (snapshotPending || byId('app').hidden || document.visibilityState !== 'visible') {
+      return
+    }
+
+    snapshotPending = true
+    request('/api/snapshot')
+      .then(applySnapshot)
+      .catch(function () {
+        /* A dropped desktop app already shows through the connection dot. */
+      })
+      .then(function () {
+        snapshotPending = false
+      })
+  }, 10000)
 
   /* Reconnect the event stream when the phone comes back from sleep. */
   document.addEventListener('visibilitychange', function () {

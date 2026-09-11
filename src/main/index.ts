@@ -44,7 +44,7 @@ async function createMainWindow(): Promise<void> {
     height: 940,
     minWidth: 1100,
     minHeight: 760,
-    backgroundColor: '#f4ede1',
+    backgroundColor: '#100e0e',
     titleBarStyle: 'hiddenInset',
     webPreferences: {
       preload,

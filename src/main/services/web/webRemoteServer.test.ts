@@ -80,7 +80,11 @@ function createHarness() {
   const appController = {
     launchPackage: vi.fn(async () => createFeedback('Launch requested')),
     listApps: vi.fn(async () => activeDevice.cachedApps!.apps),
-    toggleFavorite: vi.fn(async () => activeDevice)
+    toggleFavorite: vi.fn(async () => activeDevice),
+    getCachedForegroundApp: vi.fn(() => ({
+      packageName: 'com.netflix.ninja',
+      displayName: 'Netflix'
+    }))
   } as unknown as AppController
 
   const actionController = {
@@ -162,6 +166,10 @@ describe('WebRemoteServer', () => {
         favorite: false
       }
     ])
+    expect(snapshot.foregroundApp).toEqual({
+      packageName: 'com.netflix.ninja',
+      displayName: 'Netflix'
+    })
     expect(JSON.stringify(snapshot)).not.toContain('base64')
   })
 

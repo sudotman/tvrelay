@@ -16,12 +16,23 @@ Build a practical desktop remote for Android TV that is easy to start, reliable 
 
 ## Current UX Direction
 
-- A left rail carries the four views: Remote, Apps, Setup, Phone.
+The direction is **Ambient**: one warm dark room, one glass surface, one accent.
+
+- A floating segmented control at the top centre carries the four views: Remote, Apps, Setup, Phone.
 - The top bar always answers "which TV, which backend, connected or not" through the device chip.
+  Wake and Disconnect live inside that chip's popover, not as separate buttons.
 - One clear setup flow. ADB setup first.
 - Native remote stays collapsed and clearly labeled as optional / less reliable.
 - Remote and apps views should be unavailable or clearly empty when no TV is connected.
-- The remote view is the hero: the handset panel owns the d-pad and keys, and support cards sit beside it.
+- The remote view is the hero, and it is deliberately sparse: one glass panel holding now-playing,
+  an oversized soft pad, and volume. Back, Home, Play/Pause, pinned keys, Type, Mirror and More sit
+  under it as pills.
+- Everything else — the full key grids, typing, scrcpy, sideloading, shortcuts and pad customisation
+  — lives in the More sheet. The sheet is always one click away and never holds connection state.
+- The pad takes taps on its four edges and flicks anywhere on its face, on both desktop and phone.
+- Dark only. There is no light theme and no theme toggle.
+- Never invent a value the backend cannot report. Volume is a rocker, not a slider, because ADB
+  moves volume but never reads it back.
 
 ## Architecture Rules
 
@@ -71,6 +82,10 @@ Build a practical desktop remote for Android TV that is easy to start, reliable 
   All renderer state and IPC calls.
 - `src/renderer/src/styles.css`
   Design tokens, then components in the order the shell renders them.
+- `src/renderer/src/components/Sheet.tsx`
+  The More sheet. The one place the remote view is allowed to hide anything.
+- `src/renderer/src/components/DirectionPad.tsx`
+  The soft pad, including the pointer-flick handling that suppresses the click after a swipe.
 
 ## Validation Checklist
 

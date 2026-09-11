@@ -34,8 +34,7 @@ import {
   shouldShowToast,
   soundRemoteButtons,
   type SetupFormState,
-  type TabId,
-  type ThemeMode
+  type TabId
 } from './viewModel'
 
 const EMPTY_CAPABILITIES = {
@@ -52,14 +51,6 @@ const EMPTY_CAPABILITIES = {
  */
 export function useRelayState() {
   const [tab, setTab] = useState<TabId>('setup')
-  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
-    const savedTheme = window.localStorage.getItem('relay-theme')
-    if (savedTheme === 'light' || savedTheme === 'dark') {
-      return savedTheme
-    }
-
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-  })
   const [diagnostics, setDiagnostics] = useState<DiagnosticsStatus | null>(null)
   const [devices, setDevices] = useState<SavedDevice[]>([])
   const [connectionState, setConnectionState] = useState<ConnectionState>({ status: 'disconnected' })
@@ -216,11 +207,6 @@ export function useRelayState() {
       setForegroundAppState(null)
     }
   }
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = themeMode
-    window.localStorage.setItem('relay-theme', themeMode)
-  }, [themeMode])
 
   // Launching into a live session should land on the remote, not on setup.
   useEffect(() => {
@@ -1115,8 +1101,6 @@ export function useRelayState() {
     // view state
     tab,
     setTab,
-    themeMode,
-    setThemeMode,
     paletteOpen,
     setPaletteOpen,
     paletteQuery,

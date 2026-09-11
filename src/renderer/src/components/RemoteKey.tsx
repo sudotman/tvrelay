@@ -2,7 +2,17 @@ import { useRelay } from '../relayContext'
 import type { RemoteButton } from '../viewModel'
 import { Icon, remoteCommandIcons } from './Icon'
 
-export function RemoteKey({ button, compact }: { button: RemoteButton; compact?: boolean }) {
+/**
+ * `key` is the sheet treatment, `quick` is the pill that sits on the remote
+ * stage. Both are the same control, so cooldown and pending state stay shared.
+ */
+export function RemoteKey({
+  button,
+  variant = 'key'
+}: {
+  button: RemoteButton
+  variant?: 'key' | 'quick'
+}) {
   const relay = useRelay()
   const remainingMs = relay.commandCooldownRemaining(button.command)
   const isCoolingDown = remainingMs > 0
@@ -12,8 +22,7 @@ export function RemoteKey({ button, compact }: { button: RemoteButton; compact?:
     <button
       type="button"
       className={[
-        'key',
-        compact ? 'compact' : '',
+        variant,
         button.accent ? 'accent' : '',
         isPending ? 'is-pending' : '',
         isCoolingDown ? 'is-cooling' : ''
@@ -24,13 +33,9 @@ export function RemoteKey({ button, compact }: { button: RemoteButton; compact?:
       disabled={!relay.isConnected || isPending || isCoolingDown}
       title={isCoolingDown ? `Cooling down for ${Math.ceil(remainingMs / 1000)}s` : button.label}
     >
-      <Icon name={remoteCommandIcons[button.command]} size={compact ? 18 : 20} />
+      <Icon name={remoteCommandIcons[button.command]} size={variant === 'quick' ? 16 : 18} />
       <span>
-        {isCoolingDown
-          ? `${Math.ceil(remainingMs / 1000)}s`
-          : compact
-            ? button.short ?? button.label
-            : button.label}
+        {isCoolingDown ? `${Math.ceil(remainingMs / 1000)}s` : button.label}
       </span>
     </button>
   )

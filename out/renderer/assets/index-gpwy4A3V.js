@@ -12915,13 +12915,6 @@ const EMPTY_CAPABILITIES = {
 };
 function useRelayState() {
   const [tab, setTab] = reactExports.useState("setup");
-  const [themeMode, setThemeMode] = reactExports.useState(() => {
-    const savedTheme = window.localStorage.getItem("relay-theme");
-    if (savedTheme === "light" || savedTheme === "dark") {
-      return savedTheme;
-    }
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  });
   const [diagnostics, setDiagnostics] = reactExports.useState(null);
   const [devices, setDevices] = reactExports.useState([]);
   const [connectionState, setConnectionState] = reactExports.useState({ status: "disconnected" });
@@ -13063,10 +13056,6 @@ function useRelayState() {
       setForegroundAppState(null);
     }
   }
-  reactExports.useEffect(() => {
-    document.documentElement.dataset.theme = themeMode;
-    window.localStorage.setItem("relay-theme", themeMode);
-  }, [themeMode]);
   reactExports.useEffect(() => {
     if (landedRef.current || !diagnostics) {
       return;
@@ -13814,8 +13803,6 @@ function useRelayState() {
     // view state
     tab,
     setTab,
-    themeMode,
-    setThemeMode,
     paletteOpen,
     setPaletteOpen,
     paletteQuery,
@@ -14033,6 +14020,13 @@ const PATHS = {
     /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M6 9h12v3a6 6 0 0 1-12 0z" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 18v3" })
   ] }),
+  plus: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 6v12M6 12h12" }),
+  minus: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M6 12h12" }),
+  more: /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "5", cy: "12", r: "1.5", fill: "currentColor", stroke: "none" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "1.5", fill: "currentColor", stroke: "none" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "19", cy: "12", r: "1.5", fill: "currentColor", stroke: "none" })
+  ] }),
   copy: /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "9", y: "9", width: "12", height: "12", rx: "2.5" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" })
@@ -14169,61 +14163,6 @@ function CommandPalette() {
     }
   ) });
 }
-const TAB_ICONS = {
-  remote: "remote",
-  apps: "apps",
-  setup: "setup",
-  phone: "phone"
-};
-function Sidebar() {
-  const relay = useRelay();
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: "rail", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "button",
-      {
-        className: "rail-brand",
-        type: "button",
-        onClick: () => relay.setTab("remote"),
-        title: "Relay",
-        children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rail-brand-mark", "aria-hidden": "true", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", {}) })
-      }
-    ),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("nav", { className: "rail-nav", "aria-label": "Views", children: viewTabs.map((item) => {
-      const locked = (item.id === "remote" || item.id === "apps") && !relay.isConnected;
-      return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "button",
-        {
-          className: `rail-item${relay.tab === item.id ? " is-active" : ""}${locked ? " is-locked" : ""}`,
-          type: "button",
-          onClick: () => relay.setTab(item.id),
-          title: locked ? `${item.label} unlocks once a TV is connected.` : item.detail,
-          "aria-current": relay.tab === item.id ? "page" : void 0,
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: TAB_ICONS[item.id], size: 21 }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: item.label })
-          ]
-        },
-        item.id
-      );
-    }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rail-footer", children: [
-      relay.webRemote?.running ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "rail-badge", title: `Phone remote is live on port ${relay.webRemote.port}`, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "phone", size: 15 }),
-        relay.webRemote.connectedClients
-      ] }) : null,
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          className: "rail-ghost",
-          type: "button",
-          onClick: () => relay.setThemeMode(relay.themeMode === "light" ? "dark" : "light"),
-          title: `Switch to ${relay.themeMode === "light" ? "dark" : "light"} theme`,
-          children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: relay.themeMode === "light" ? "moon" : "sun", size: 18 })
-        }
-      )
-    ] })
-  ] });
-}
 const TONE_ICONS = {
   positive: "check",
   warning: "alert",
@@ -14241,6 +14180,24 @@ function Toasts() {
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: toast.detail })
       ] })
     ] }, toast.id);
+  }) });
+}
+function ViewNav() {
+  const relay = useRelay();
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("nav", { className: "viewnav", "aria-label": "Views", children: viewTabs.map((item) => {
+    const locked = (item.id === "remote" || item.id === "apps") && !relay.isConnected;
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        className: `viewnav-item${relay.tab === item.id ? " is-active" : ""}${locked ? " is-locked" : ""}`,
+        type: "button",
+        onClick: () => relay.setTab(item.id),
+        title: locked ? `${item.label} unlocks once a TV is connected.` : item.detail,
+        "aria-current": relay.tab === item.id ? "page" : void 0,
+        children: item.label
+      },
+      item.id
+    );
   }) });
 }
 function DevicePicker() {
@@ -14266,7 +14223,7 @@ function DevicePicker() {
     /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "button",
       {
-        className: `device-chip tone-${tone}`,
+        className: "device-chip",
         type: "button",
         onClick: () => setOpen((current) => !current),
         "aria-expanded": open,
@@ -14276,7 +14233,7 @@ function DevicePicker() {
             /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: label }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: detail })
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "down", size: 15 })
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "down", size: 14 })
         ]
       }
     ),
@@ -14302,6 +14259,50 @@ function DevicePicker() {
         },
         device.id
       )),
+      relay.isConnected ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "popover-divider" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            className: "popover-item",
+            type: "button",
+            onClick: () => {
+              setOpen(false);
+              void relay.wakeAndReconnect();
+            },
+            disabled: relay.busy === "wake" || !relay.capabilities.typing,
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Wake and reconnect" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: "Sends an ADB wake, then reconnects" })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "wake", size: 15 })
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            className: "popover-item danger",
+            type: "button",
+            onClick: () => {
+              setOpen(false);
+              void relay.disconnect();
+            },
+            disabled: relay.busy === "disconnect",
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Disconnect" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("small", { children: [
+                  "Drop the session with ",
+                  relay.activeDevice?.name ?? "this TV"
+                ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "plug", size: 15 })
+            ]
+          }
+        )
+      ] }) : null,
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "popover-divider" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         "button",
@@ -14323,43 +14324,10 @@ function DevicePicker() {
 }
 function TopBar() {
   const relay = useRelay();
-  const view = viewTabs.find((item) => item.id === relay.tab);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "topbar", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "topbar-lead", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { children: view?.label }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: view?.detail })
-    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(ViewNav, {}),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "topbar-tail", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(DevicePicker, {}),
-      relay.isConnected ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs(
-          "button",
-          {
-            className: "button ghost",
-            type: "button",
-            onClick: () => void relay.wakeAndReconnect(),
-            disabled: relay.busy === "wake" || !relay.capabilities.typing,
-            title: "Send an ADB wake, then reconnect",
-            children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "wake", size: 16 }),
-              "Wake"
-            ]
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs(
-          "button",
-          {
-            className: "button ghost danger",
-            type: "button",
-            onClick: () => void relay.disconnect(),
-            disabled: relay.busy === "disconnect",
-            children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "plug", size: 16 }),
-              "Disconnect"
-            ]
-          }
-        )
-      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      relay.isConnected ? null : /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "button",
         {
           className: "button primary",
@@ -14372,12 +14340,15 @@ function TopBar() {
           ]
         }
       ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(DevicePicker, {}),
       /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "button",
         {
           className: "button ghost palette-trigger",
           type: "button",
           onClick: () => relay.setPaletteOpen(true),
+          title: "Open the command palette",
+          "aria-label": "Open the command palette",
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "search", size: 16 }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("kbd", { children: "⌘K" })
@@ -14670,39 +14641,93 @@ function PhoneView() {
   ] });
 }
 const DIRECTIONS = [
-  { command: "up", icon: "up" },
-  { command: "right", icon: "right" },
-  { command: "down", icon: "down" },
-  { command: "left", icon: "left" }
+  { command: "up", icon: "up", label: "Up" },
+  { command: "right", icon: "right", label: "Right" },
+  { command: "down", icon: "down", label: "Down" },
+  { command: "left", icon: "left", label: "Left" }
 ];
+const SWIPE_DISTANCE = 38;
+const SWIPE_TIMEOUT_MS = 700;
 function DirectionPad() {
   const relay = useRelay();
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "dpad", role: "group", "aria-label": "Directional pad", children: [
-    DIRECTIONS.map((direction) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "button",
-      {
-        className: `dpad-dir ${direction.command}`,
-        type: "button",
-        onClick: () => void relay.sendRemoteCommand(direction.command),
-        disabled: !relay.isConnected,
-        "aria-label": direction.command,
-        children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: direction.icon, size: 20 })
+  const origin = reactExports.useRef(null);
+  const swiped = reactExports.useRef(false);
+  const onPointerDown = (event) => {
+    if (!relay.isConnected) {
+      return;
+    }
+    origin.current = { x: event.clientX, y: event.clientY, at: Date.now() };
+    swiped.current = false;
+  };
+  const onPointerUp = (event) => {
+    const start = origin.current;
+    origin.current = null;
+    if (!start || !relay.isConnected) {
+      return;
+    }
+    const deltaX = event.clientX - start.x;
+    const deltaY = event.clientY - start.y;
+    if (Math.hypot(deltaX, deltaY) < SWIPE_DISTANCE || Date.now() - start.at > SWIPE_TIMEOUT_MS) {
+      return;
+    }
+    swiped.current = true;
+    const command = Math.abs(deltaX) > Math.abs(deltaY) ? deltaX > 0 ? "right" : "left" : deltaY > 0 ? "down" : "up";
+    void relay.sendRemoteCommand(command);
+  };
+  const onClickCapture = (event) => {
+    if (!swiped.current) {
+      return;
+    }
+    swiped.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "div",
+    {
+      className: `softpad${relay.isConnected ? "" : " is-disabled"}`,
+      role: "group",
+      "aria-label": "Directional pad",
+      onPointerDown,
+      onPointerUp,
+      onPointerCancel: () => {
+        origin.current = null;
       },
-      direction.command
-    )),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "button",
-      {
-        className: "dpad-ok",
-        type: "button",
-        onClick: () => void relay.sendRemoteCommand("select"),
-        disabled: !relay.isConnected,
-        children: "OK"
-      }
-    )
-  ] });
+      onPointerLeave: () => {
+        origin.current = null;
+      },
+      onClickCapture,
+      children: [
+        DIRECTIONS.map((direction) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            className: `softpad-dir ${direction.command}`,
+            type: "button",
+            onClick: () => void relay.sendRemoteCommand(direction.command),
+            disabled: !relay.isConnected,
+            "aria-label": direction.label,
+            children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: direction.icon, size: 20 })
+          },
+          direction.command
+        )),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            className: "softpad-ok",
+            type: "button",
+            onClick: () => void relay.sendRemoteCommand("select"),
+            disabled: !relay.isConnected,
+            children: "OK"
+          }
+        )
+      ]
+    }
+  );
 }
-function RemoteKey({ button, compact }) {
+function RemoteKey({
+  button,
+  variant = "key"
+}) {
   const relay = useRelay();
   const remainingMs = relay.commandCooldownRemaining(button.command);
   const isCoolingDown = remainingMs > 0;
@@ -14712,8 +14737,7 @@ function RemoteKey({ button, compact }) {
     {
       type: "button",
       className: [
-        "key",
-        compact ? "compact" : "",
+        variant,
         button.accent ? "accent" : "",
         isPending ? "is-pending" : "",
         isCoolingDown ? "is-cooling" : ""
@@ -14722,35 +14746,168 @@ function RemoteKey({ button, compact }) {
       disabled: !relay.isConnected || isPending || isCoolingDown,
       title: isCoolingDown ? `Cooling down for ${Math.ceil(remainingMs / 1e3)}s` : button.label,
       children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: remoteCommandIcons[button.command], size: compact ? 18 : 20 }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: isCoolingDown ? `${Math.ceil(remainingMs / 1e3)}s` : compact ? button.short ?? button.label : button.label })
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: remoteCommandIcons[button.command], size: variant === "quick" ? 16 : 18 }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: isCoolingDown ? `${Math.ceil(remainingMs / 1e3)}s` : button.label })
       ]
     }
   );
 }
+function Sheet({
+  label,
+  head,
+  onClose,
+  children
+}) {
+  reactExports.useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sheet-scrim", role: "presentation", onMouseDown: onClose, children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "section",
+    {
+      className: "sheet",
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-label": label,
+      onMouseDown: (event) => event.stopPropagation(),
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sheet-grip", "aria-hidden": "true" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "sheet-head", children: [
+          head,
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "sheet-close", type: "button", onClick: onClose, "aria-label": "Close", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "close", size: 15 }) })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sheet-body", children })
+      ]
+    }
+  ) });
+}
+const SHEET_TABS = [
+  { id: "keys", label: "Keys" },
+  { id: "type", label: "Type" },
+  { id: "tools", label: "Tools" },
+  { id: "shortcuts", label: "Shortcuts" }
+];
 function NowPlaying() {
   const relay = useRelay();
+  const app = relay.foregroundApp;
   const last = relay.latestRemoteAction;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "now-playing", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "now-playing-main", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "label", children: "On screen" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: relay.foregroundApp?.displayName ?? "Unavailable" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: relay.capabilities.apps ? relay.foregroundApp?.packageName ?? "Polling the TV every few seconds" : "Needs ADB app access" })
+    app ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "span",
+      {
+        className: "now-playing-art",
+        style: { "--hue": appHue(app.packageName) },
+        "aria-hidden": "true",
+        children: appMonogram(app.displayName)
+      }
+    ) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "now-playing-art is-idle", "aria-hidden": "true", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "screen", size: 26 }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "now-playing-copy", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "label", children: "Now playing" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: app?.displayName ?? "Nothing detected" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: relay.capabilities.apps ? app?.packageName ?? "Polling the TV every few seconds" : "Needs ADB app access" })
     ] }),
-    last ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `pill tone-${feedbackTone(last.status)}`, "aria-live": "polite", children: last.title }) : null
+    last ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `pill tone-${feedbackTone(last.status)} now-playing-feedback`, "aria-live": "polite", children: last.title }) : null
   ] });
 }
-function TypingCard() {
+function VolumeColumn() {
   const relay = useRelay();
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "card", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "card-head", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("h3", { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "keyboard", size: 17 }),
-        "Type on the TV"
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "muted", children: relay.activeBackend === "native" ? relay.capabilities.typing ? "Uses ADB fallback" : "Needs ADB" : "Ready" })
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vol-column", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vol-stack", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          type: "button",
+          onClick: () => void relay.sendRemoteCommand("volumeUp"),
+          disabled: !relay.isConnected,
+          "aria-label": "Volume up",
+          children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "plus", size: 19 })
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "VOL" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          type: "button",
+          onClick: () => void relay.sendRemoteCommand("volumeDown"),
+          disabled: !relay.isConnected,
+          "aria-label": "Volume down",
+          children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "minus", size: 19 })
+        }
+      )
     ] }),
-    !relay.capabilities.typing ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "notice", children: "Typing runs over ADB. Connect or pair ADB for this TV in Setup first." }) : null,
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        className: "vol-mute",
+        type: "button",
+        onClick: () => void relay.sendRemoteCommand("mute"),
+        disabled: !relay.isConnected,
+        "aria-label": "Mute",
+        title: "Mute",
+        children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "mute", size: 18 })
+      }
+    )
+  ] });
+}
+function KeysPanel() {
+  const relay = useRelay();
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "key-group", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "label", children: "Navigation" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "key-grid", children: relay.visibleCoreRemoteButtons.map((button) => /* @__PURE__ */ jsxRuntimeExports.jsx(RemoteKey, { button }, button.command)) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "key-group", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "label", children: "Playback" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "key-grid", children: relay.visibleMediaRemoteButtons.map((button) => /* @__PURE__ */ jsxRuntimeExports.jsx(RemoteKey, { button }, button.command)) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "key-group", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "label", children: "Sound" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "key-grid", children: relay.visibleSoundRemoteButtons.map((button) => /* @__PURE__ */ jsxRuntimeExports.jsx(RemoteKey, { button }, button.command)) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "key-group", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "label", children: "Pin or hide" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted fine-print", children: "Pinned keys sit on the remote stage next to Back and Home. Hidden ones drop out of this sheet. The pad always stays." }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "customize-grid", children: allRemoteButtons.map((button) => {
+        const isPinned = relay.activePreferences?.remoteLayout.pinnedCommands.includes(button.command) ?? false;
+        const isHidden = relay.activePreferences?.remoteLayout.hiddenCommands.includes(button.command) ?? false;
+        return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "customize-row", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: button.label }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chip-row", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: `chip${isPinned ? " is-on" : ""}`,
+                type: "button",
+                onClick: () => void relay.togglePinnedCommand(button.command),
+                children: isPinned ? "Pinned" : "Pin"
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: `chip${isHidden ? " is-on" : ""}`,
+                type: "button",
+                onClick: () => void relay.toggleHiddenCommand(button.command),
+                children: isHidden ? "Hidden" : "Hide"
+              }
+            )
+          ] })
+        ] }, button.command);
+      }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "button-row", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "button ghost", type: "button", onClick: () => void relay.resetRemoteLayout(), children: "Reset layout" }) })
+    ] })
+  ] });
+}
+function TypePanel() {
+  const relay = useRelay();
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    !relay.capabilities.typing ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "notice tone-warning", children: "Typing runs over ADB. Connect or pair ADB for this TV in Setup first." }) : /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted fine-print", children: relay.activeBackend === "native" ? "Native Remote is active, so text still goes out over the ADB fallback." : "Text goes to whatever field the TV has focused." }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       "textarea",
       {
@@ -14797,16 +14954,10 @@ function TypingCard() {
     ] })
   ] });
 }
-function PowerToolsCard() {
+function ToolsPanel() {
   const relay = useRelay();
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "card", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "card-head", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("h3", { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "screen", size: 17 }),
-        "Power tools"
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "muted", children: relay.activeBackend === "native" ? "Run over ADB fallback" : "Run over ADB" })
-    ] }),
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted fine-print", children: relay.activeBackend === "native" ? "Both of these run over the ADB fallback, not Native Remote." : "Both of these run over ADB." }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "tool-row", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "tool-copy", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Screen mirror" }),
@@ -14865,67 +15016,24 @@ function PowerToolsCard() {
     ] })
   ] });
 }
-function CustomizeCard() {
-  const relay = useRelay();
-  const [open, setOpen] = reactExports.useState(false);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: `card collapsible${open ? " is-open" : ""}`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "card-head as-button", type: "button", onClick: () => setOpen((value) => !value), children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("h3", { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "setup", size: 17 }),
-        "Customize the pad"
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "chevron", size: 16, className: "icon chevron" })
-    ] }),
-    open ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted", children: "Pin the keys you use daily or hide the ones you never touch. The D-pad always stays." }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "customize-grid", children: allRemoteButtons.map((button) => {
-        const isPinned = relay.activePreferences?.remoteLayout.pinnedCommands.includes(button.command) ?? false;
-        const isHidden = relay.activePreferences?.remoteLayout.hiddenCommands.includes(button.command) ?? false;
-        return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "customize-row", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: button.label }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chip-row", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: `chip${isPinned ? " is-on" : ""}`,
-                type: "button",
-                onClick: () => void relay.togglePinnedCommand(button.command),
-                children: isPinned ? "Pinned" : "Pin"
-              }
-            ),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: `chip${isHidden ? " is-on" : ""}`,
-                type: "button",
-                onClick: () => void relay.toggleHiddenCommand(button.command),
-                children: isHidden ? "Hidden" : "Hide"
-              }
-            )
-          ] })
-        ] }, button.command);
-      }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "button ghost", type: "button", onClick: () => void relay.resetRemoteLayout(), children: "Reset layout" })
-    ] }) : null
-  ] });
-}
-function ShortcutsCard() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "card", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "card-head", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("h3", { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "command", size: 17 }),
-        "Keyboard"
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "muted", children: "Active on this view" })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("dl", { className: "shortcut-list", children: shortcutLegend.map((shortcut) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shortcut-row", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: shortcut.keys.split(" / ").map((part) => /* @__PURE__ */ jsxRuntimeExports.jsx("kbd", { children: part }, part)) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: shortcut.action })
-    ] }, shortcut.keys)) })
+function ShortcutsPanel() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "muted fine-print", children: "Active while the Remote view has focus." }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("dl", { className: "shortcut-list", children: [
+      shortcutLegend.map((shortcut) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shortcut-row", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: shortcut.keys.split(" / ").map((part) => /* @__PURE__ */ jsxRuntimeExports.jsx("kbd", { children: part }, part)) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: shortcut.action })
+      ] }, shortcut.keys)),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shortcut-row", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: /* @__PURE__ */ jsxRuntimeExports.jsx("kbd", { children: "⌘K" }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: "Command palette" })
+      ] })
+    ] })
   ] });
 }
 function RemoteView() {
   const relay = useRelay();
+  const [sheetTab, setSheetTab] = reactExports.useState(null);
   if (!relay.isConnected) {
     return /* @__PURE__ */ jsxRuntimeExports.jsx(
       EmptyState,
@@ -14938,63 +15046,106 @@ function RemoteView() {
       }
     );
   }
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "remote-layout", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "handset", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "handset-top", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "label", children: "Live control" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: relay.activeDevice?.name ?? "Connected TV" })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "pill tone-positive", children: backendLabel(relay.activeBackend) })
-      ] }),
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "remote-stage", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "stage-glass", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(NowPlaying, {}),
-      relay.pinnedRemoteButtons.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "key-group", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "label", children: "Pinned" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "key-grid compact", children: relay.pinnedRemoteButtons.map((button) => /* @__PURE__ */ jsxRuntimeExports.jsx(RemoteKey, { button, compact: true }, `pinned-${button.command}`)) })
-      ] }) : null,
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "pad-stage", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "pad-column", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(DirectionPad, {}),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rocker", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "button",
-            {
-              type: "button",
-              onClick: () => void relay.sendRemoteCommand("volumeUp"),
-              "aria-label": "Volume up",
-              children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "up", size: 18 })
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "VOL" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "button",
-            {
-              type: "button",
-              onClick: () => void relay.sendRemoteCommand("volumeDown"),
-              "aria-label": "Volume down",
-              children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "down", size: 18 })
-            }
-          )
-        ] })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "pad-hint", children: "Tap an edge, or flick anywhere on the pad" })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "key-group", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "label", children: "Navigation" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "key-grid", children: relay.visibleCoreRemoteButtons.map((button) => /* @__PURE__ */ jsxRuntimeExports.jsx(RemoteKey, { button }, button.command)) })
+      /* @__PURE__ */ jsxRuntimeExports.jsx(VolumeColumn, {})
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "quick-row", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          className: "quick",
+          type: "button",
+          onClick: () => void relay.sendRemoteCommand("back"),
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "back", size: 16 }),
+            "Back"
+          ]
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          className: "quick",
+          type: "button",
+          onClick: () => void relay.sendRemoteCommand("home"),
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "home", size: 16 }),
+            "Home"
+          ]
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          className: "quick accent",
+          type: "button",
+          onClick: () => void relay.sendRemoteCommand("playPause"),
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "play", size: 17 }),
+            "Play or pause"
+          ]
+        }
+      ),
+      relay.pinnedRemoteButtons.map((button) => /* @__PURE__ */ jsxRuntimeExports.jsx(RemoteKey, { button, variant: "quick" }, `pinned-${button.command}`)),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "quick", type: "button", onClick: () => setSheetTab("type"), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "keyboard", size: 16 }),
+        "Type"
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "key-group", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "label", children: "Playback" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "key-grid compact", children: relay.visibleMediaRemoteButtons.map((button) => /* @__PURE__ */ jsxRuntimeExports.jsx(RemoteKey, { button, compact: true }, button.command)) })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "key-group", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "label", children: "Sound" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "key-grid compact", children: relay.visibleSoundRemoteButtons.map((button) => /* @__PURE__ */ jsxRuntimeExports.jsx(RemoteKey, { button, compact: true }, button.command)) })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          className: "quick",
+          type: "button",
+          onClick: () => void relay.launchScrcpy(),
+          disabled: relay.busy === "scrcpy" || !relay.capabilities.typing || !relay.scrcpyStatus.available,
+          title: relay.scrcpyStatus.available ? "Open the scrcpy mirror" : relay.scrcpyStatus.installHint,
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "screen", size: 16 }),
+            "Mirror"
+          ]
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "quick", type: "button", onClick: () => setSheetTab("keys"), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "more", size: 16 }),
+        "More"
       ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "remote-side", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(TypingCard, {}),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(PowerToolsCard, {}),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(ShortcutsCard, {}),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(CustomizeCard, {})
-    ] })
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "stage-note", children: [
+      "Every key, typing, sideloading and the shortcut list live under More · ",
+      /* @__PURE__ */ jsxRuntimeExports.jsx("kbd", { children: "⌘K" }),
+      " for anything"
+    ] }),
+    sheetTab ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      Sheet,
+      {
+        label: "More controls",
+        onClose: () => setSheetTab(null),
+        head: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sheet-tabs", role: "tablist", children: SHEET_TABS.map((tab) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            className: `sheet-tab${sheetTab === tab.id ? " is-active" : ""}`,
+            type: "button",
+            role: "tab",
+            "aria-selected": sheetTab === tab.id,
+            onClick: () => setSheetTab(tab.id),
+            children: tab.label
+          },
+          tab.id
+        )) }),
+        children: [
+          sheetTab === "keys" ? /* @__PURE__ */ jsxRuntimeExports.jsx(KeysPanel, {}) : null,
+          sheetTab === "type" ? /* @__PURE__ */ jsxRuntimeExports.jsx(TypePanel, {}) : null,
+          sheetTab === "tools" ? /* @__PURE__ */ jsxRuntimeExports.jsx(ToolsPanel, {}) : null,
+          sheetTab === "shortcuts" ? /* @__PURE__ */ jsxRuntimeExports.jsx(ShortcutsPanel, {}) : null
+        ]
+      }
+    ) : null
   ] });
 }
 function DeviceRoster() {
@@ -15472,9 +15623,9 @@ function Workspace() {
     relay.tab === "phone" ? /* @__PURE__ */ jsxRuntimeExports.jsx(PhoneView, {}) : null
   ] });
 }
-function StatusBar() {
+function StatusLine() {
   const relay = useRelay();
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("footer", { className: "statusbar", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: relay.statusMessage }) });
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "statusline", children: relay.statusMessage });
 }
 function App() {
   const relay = useRelayState();
@@ -15521,12 +15672,10 @@ function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [relay.activePreferences, relay.connectionState.status, relay.paletteOpen]);
   return /* @__PURE__ */ jsxRuntimeExports.jsx(RelayContext.Provider, { value: relay, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shell", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Sidebar, {}),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shell-main", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(TopBar, {}),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Workspace, {}),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(StatusBar, {})
-    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "shell-wash", "aria-hidden": "true" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(TopBar, {}),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Workspace, {}),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(StatusLine, {}),
     /* @__PURE__ */ jsxRuntimeExports.jsx(CommandPalette, {}),
     /* @__PURE__ */ jsxRuntimeExports.jsx(Toasts, {})
   ] }) });

@@ -2,7 +2,15 @@ import type { ActionFeedback, ForegroundApp, LaunchableApp, SavedDevice } from '
 import type { AdbClient } from './adb/adbClient'
 import type { DeviceManager } from './deviceManager'
 
+const FOREGROUND_CACHE_TTL_MS = 20_000
+
 export class AppController {
+  /**
+   * Last value the desktop poll saw. Clients that must not create their own ADB
+   * traffic (the phone remote) read this instead of asking the TV again.
+   */
+  private lastForegroundApp: { app: ForegroundApp | null; at: number } | null = null
+
   constructor(
     private readonly deviceManager: DeviceManager,
     private readonly adbClient: AdbClient
@@ -50,10 +58,29 @@ export class AppController {
     const activeDevice = this.deviceManager.getActiveDevice()
 
     if (!activeDevice) {
+      this.lastForegroundApp = null
       return null
     }
 
-    return this.deviceManager.withAdbAccess((serial) => this.adbClient.getForegroundApp(serial))
+    const app = await this.deviceManager.withAdbAccess((serial) =>
+      this.adbClient.getForegroundApp(serial)
+    )
+
+    this.lastForegroundApp = { app, at: Date.now() }
+    return app
+  }
+
+  /** Goes stale rather than lying: past the TTL this reports nothing. */
+  getCachedForegroundApp(): ForegroundApp | null {
+    if (!this.lastForegroundApp || !this.deviceManager.getActiveDevice()) {
+      return null
+    }
+
+    if (Date.now() - this.lastForegroundApp.at > FOREGROUND_CACHE_TTL_MS) {
+      return null
+    }
+
+    return this.lastForegroundApp.app
   }
 
   async launchPackage(packageName: string): Promise<ActionFeedback> {

@@ -5,31 +5,62 @@ import { DirectionPad } from '../components/DirectionPad'
 import { Icon } from '../components/Icon'
 import { RemoteKey } from '../components/RemoteKey'
 import { EmptyState } from '../components/EmptyState'
+import { Sheet } from '../components/Sheet'
 import {
   allRemoteButtons,
-  backendLabel,
+  appHue,
+  appMonogram,
   feedbackTone,
   scrcpyPresetLabels,
   shortcutLegend
 } from '../viewModel'
 
+type SheetTab = 'keys' | 'type' | 'tools' | 'shortcuts'
+
+const SHEET_TABS: Array<{ id: SheetTab; label: string }> = [
+  { id: 'keys', label: 'Keys' },
+  { id: 'type', label: 'Type' },
+  { id: 'tools', label: 'Tools' },
+  { id: 'shortcuts', label: 'Shortcuts' }
+]
+
+/**
+ * Ambient builds the layout around what is on the TV rather than around the
+ * key grid, so this is the first thing in the glass panel.
+ */
 function NowPlaying() {
   const relay = useRelay()
+  const app = relay.foregroundApp
   const last = relay.latestRemoteAction
 
   return (
     <div className="now-playing">
-      <div className="now-playing-main">
-        <span className="label">On screen</span>
-        <strong>{relay.foregroundApp?.displayName ?? 'Unavailable'}</strong>
+      {app ? (
+        <span
+          className="now-playing-art"
+          style={{ '--hue': appHue(app.packageName) } as React.CSSProperties}
+          aria-hidden="true"
+        >
+          {appMonogram(app.displayName)}
+        </span>
+      ) : (
+        <span className="now-playing-art is-idle" aria-hidden="true">
+          <Icon name="screen" size={26} />
+        </span>
+      )}
+
+      <span className="now-playing-copy">
+        <span className="label">Now playing</span>
+        <strong>{app?.displayName ?? 'Nothing detected'}</strong>
         <small>
           {relay.capabilities.apps
-            ? relay.foregroundApp?.packageName ?? 'Polling the TV every few seconds'
+            ? app?.packageName ?? 'Polling the TV every few seconds'
             : 'Needs ADB app access'}
         </small>
-      </div>
+      </span>
+
       {last ? (
-        <span className={`pill tone-${feedbackTone(last.status)}`} aria-live="polite">
+        <span className={`pill tone-${feedbackTone(last.status)} now-playing-feedback`} aria-live="polite">
           {last.title}
         </span>
       ) : null}
@@ -37,30 +68,142 @@ function NowPlaying() {
   )
 }
 
-function TypingCard() {
+/**
+ * ADB only moves volume up and down — it never reports a level — so this stays
+ * a rocker rather than a slider that would have to invent a number.
+ */
+function VolumeColumn() {
   const relay = useRelay()
 
   return (
-    <section className="card">
-      <header className="card-head">
-        <h3>
-          <Icon name="keyboard" size={17} />
-          Type on the TV
-        </h3>
-        <span className="muted">
-          {relay.activeBackend === 'native'
-            ? relay.capabilities.typing
-              ? 'Uses ADB fallback'
-              : 'Needs ADB'
-            : 'Ready'}
-        </span>
-      </header>
+    <div className="vol-column">
+      <div className="vol-stack">
+        <button
+          type="button"
+          onClick={() => void relay.sendRemoteCommand('volumeUp')}
+          disabled={!relay.isConnected}
+          aria-label="Volume up"
+        >
+          <Icon name="plus" size={19} />
+        </button>
+        <span>VOL</span>
+        <button
+          type="button"
+          onClick={() => void relay.sendRemoteCommand('volumeDown')}
+          disabled={!relay.isConnected}
+          aria-label="Volume down"
+        >
+          <Icon name="minus" size={19} />
+        </button>
+      </div>
+      <button
+        className="vol-mute"
+        type="button"
+        onClick={() => void relay.sendRemoteCommand('mute')}
+        disabled={!relay.isConnected}
+        aria-label="Mute"
+        title="Mute"
+      >
+        <Icon name="mute" size={18} />
+      </button>
+    </div>
+  )
+}
 
+function KeysPanel() {
+  const relay = useRelay()
+
+  return (
+    <>
+      <div className="key-group">
+        <span className="label">Navigation</span>
+        <div className="key-grid">
+          {relay.visibleCoreRemoteButtons.map((button) => (
+            <RemoteKey key={button.command} button={button} />
+          ))}
+        </div>
+      </div>
+
+      <div className="key-group">
+        <span className="label">Playback</span>
+        <div className="key-grid">
+          {relay.visibleMediaRemoteButtons.map((button) => (
+            <RemoteKey key={button.command} button={button} />
+          ))}
+        </div>
+      </div>
+
+      <div className="key-group">
+        <span className="label">Sound</span>
+        <div className="key-grid">
+          {relay.visibleSoundRemoteButtons.map((button) => (
+            <RemoteKey key={button.command} button={button} />
+          ))}
+        </div>
+      </div>
+
+      <div className="key-group">
+        <span className="label">Pin or hide</span>
+        <p className="muted fine-print">
+          Pinned keys sit on the remote stage next to Back and Home. Hidden ones drop out of this
+          sheet. The pad always stays.
+        </p>
+        <div className="customize-grid">
+          {allRemoteButtons.map((button) => {
+            const isPinned =
+              relay.activePreferences?.remoteLayout.pinnedCommands.includes(button.command) ?? false
+            const isHidden =
+              relay.activePreferences?.remoteLayout.hiddenCommands.includes(button.command) ?? false
+
+            return (
+              <div key={button.command} className="customize-row">
+                <strong>{button.label}</strong>
+                <div className="chip-row">
+                  <button
+                    className={`chip${isPinned ? ' is-on' : ''}`}
+                    type="button"
+                    onClick={() => void relay.togglePinnedCommand(button.command)}
+                  >
+                    {isPinned ? 'Pinned' : 'Pin'}
+                  </button>
+                  <button
+                    className={`chip${isHidden ? ' is-on' : ''}`}
+                    type="button"
+                    onClick={() => void relay.toggleHiddenCommand(button.command)}
+                  >
+                    {isHidden ? 'Hidden' : 'Hide'}
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        <div className="button-row">
+          <button className="button ghost" type="button" onClick={() => void relay.resetRemoteLayout()}>
+            Reset layout
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+function TypePanel() {
+  const relay = useRelay()
+
+  return (
+    <>
       {!relay.capabilities.typing ? (
-        <p className="notice">
+        <p className="notice tone-warning">
           Typing runs over ADB. Connect or pair ADB for this TV in Setup first.
         </p>
-      ) : null}
+      ) : (
+        <p className="muted fine-print">
+          {relay.activeBackend === 'native'
+            ? 'Native Remote is active, so text still goes out over the ADB fallback.'
+            : 'Text goes to whatever field the TV has focused.'}
+        </p>
+      )}
 
       <textarea
         value={relay.textInput}
@@ -100,24 +243,20 @@ function TypingCard() {
           Delete
         </button>
       </div>
-    </section>
+    </>
   )
 }
 
-function PowerToolsCard() {
+function ToolsPanel() {
   const relay = useRelay()
 
   return (
-    <section className="card">
-      <header className="card-head">
-        <h3>
-          <Icon name="screen" size={17} />
-          Power tools
-        </h3>
-        <span className="muted">
-          {relay.activeBackend === 'native' ? 'Run over ADB fallback' : 'Run over ADB'}
-        </span>
-      </header>
+    <>
+      <p className="muted fine-print">
+        {relay.activeBackend === 'native'
+          ? 'Both of these run over the ADB fallback, not Native Remote.'
+          : 'Both of these run over ADB.'}
+      </p>
 
       <div className="tool-row">
         <div className="tool-copy">
@@ -184,78 +323,14 @@ function PowerToolsCard() {
           </button>
         </div>
       </div>
-    </section>
+    </>
   )
 }
 
-function CustomizeCard() {
-  const relay = useRelay()
-  const [open, setOpen] = useState(false)
-
+function ShortcutsPanel() {
   return (
-    <section className={`card collapsible${open ? ' is-open' : ''}`}>
-      <button className="card-head as-button" type="button" onClick={() => setOpen((value) => !value)}>
-        <h3>
-          <Icon name="setup" size={17} />
-          Customize the pad
-        </h3>
-        <Icon name="chevron" size={16} className="icon chevron" />
-      </button>
-
-      {open ? (
-        <>
-          <p className="muted">
-            Pin the keys you use daily or hide the ones you never touch. The D-pad always stays.
-          </p>
-          <div className="customize-grid">
-            {allRemoteButtons.map((button) => {
-              const isPinned =
-                relay.activePreferences?.remoteLayout.pinnedCommands.includes(button.command) ?? false
-              const isHidden =
-                relay.activePreferences?.remoteLayout.hiddenCommands.includes(button.command) ?? false
-
-              return (
-                <div key={button.command} className="customize-row">
-                  <strong>{button.label}</strong>
-                  <div className="chip-row">
-                    <button
-                      className={`chip${isPinned ? ' is-on' : ''}`}
-                      type="button"
-                      onClick={() => void relay.togglePinnedCommand(button.command)}
-                    >
-                      {isPinned ? 'Pinned' : 'Pin'}
-                    </button>
-                    <button
-                      className={`chip${isHidden ? ' is-on' : ''}`}
-                      type="button"
-                      onClick={() => void relay.toggleHiddenCommand(button.command)}
-                    >
-                      {isHidden ? 'Hidden' : 'Hide'}
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-          <button className="button ghost" type="button" onClick={() => void relay.resetRemoteLayout()}>
-            Reset layout
-          </button>
-        </>
-      ) : null}
-    </section>
-  )
-}
-
-function ShortcutsCard() {
-  return (
-    <section className="card">
-      <header className="card-head">
-        <h3>
-          <Icon name="command" size={17} />
-          Keyboard
-        </h3>
-        <span className="muted">Active on this view</span>
-      </header>
+    <>
+      <p className="muted fine-print">Active while the Remote view has focus.</p>
       <dl className="shortcut-list">
         {shortcutLegend.map((shortcut) => (
           <div key={shortcut.keys} className="shortcut-row">
@@ -267,13 +342,20 @@ function ShortcutsCard() {
             <dd>{shortcut.action}</dd>
           </div>
         ))}
+        <div className="shortcut-row">
+          <dt>
+            <kbd>⌘K</kbd>
+          </dt>
+          <dd>Command palette</dd>
+        </div>
       </dl>
-    </section>
+    </>
   )
 }
 
 export function RemoteView() {
   const relay = useRelay()
+  const [sheetTab, setSheetTab] = useState<SheetTab | null>(null)
 
   if (!relay.isConnected) {
     return (
@@ -288,84 +370,102 @@ export function RemoteView() {
   }
 
   return (
-    <div className="remote-layout">
-      <section className="handset">
-        <div className="handset-top">
-          <div>
-            <span className="label">Live control</span>
-            <strong>{relay.activeDevice?.name ?? 'Connected TV'}</strong>
-          </div>
-          <span className="pill tone-positive">{backendLabel(relay.activeBackend)}</span>
-        </div>
-
+    <div className="remote-stage">
+      <section className="stage-glass">
         <NowPlaying />
 
-        {relay.pinnedRemoteButtons.length > 0 ? (
-          <div className="key-group">
-            <span className="label">Pinned</span>
-            <div className="key-grid compact">
-              {relay.pinnedRemoteButtons.map((button) => (
-                <RemoteKey key={`pinned-${button.command}`} button={button} compact />
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="pad-stage">
+        <div className="pad-column">
           <DirectionPad />
-          <div className="rocker">
-            <button
-              type="button"
-              onClick={() => void relay.sendRemoteCommand('volumeUp')}
-              aria-label="Volume up"
-            >
-              <Icon name="up" size={18} />
-            </button>
-            <span>VOL</span>
-            <button
-              type="button"
-              onClick={() => void relay.sendRemoteCommand('volumeDown')}
-              aria-label="Volume down"
-            >
-              <Icon name="down" size={18} />
-            </button>
-          </div>
+          <p className="pad-hint">Tap an edge, or flick anywhere on the pad</p>
         </div>
 
-        <div className="key-group">
-          <span className="label">Navigation</span>
-          <div className="key-grid">
-            {relay.visibleCoreRemoteButtons.map((button) => (
-              <RemoteKey key={button.command} button={button} />
-            ))}
-          </div>
-        </div>
-
-        <div className="key-group">
-          <span className="label">Playback</span>
-          <div className="key-grid compact">
-            {relay.visibleMediaRemoteButtons.map((button) => (
-              <RemoteKey key={button.command} button={button} compact />
-            ))}
-          </div>
-        </div>
-
-        <div className="key-group">
-          <span className="label">Sound</span>
-          <div className="key-grid compact">
-            {relay.visibleSoundRemoteButtons.map((button) => (
-              <RemoteKey key={button.command} button={button} compact />
-            ))}
-          </div>
-        </div>
+        <VolumeColumn />
       </section>
 
-      <div className="remote-side">
-        <TypingCard />
-        <PowerToolsCard />
-        <ShortcutsCard />
-        <CustomizeCard />
+      <div className="quick-row">
+        <button
+          className="quick"
+          type="button"
+          onClick={() => void relay.sendRemoteCommand('back')}
+        >
+          <Icon name="back" size={16} />
+          Back
+        </button>
+        <button
+          className="quick"
+          type="button"
+          onClick={() => void relay.sendRemoteCommand('home')}
+        >
+          <Icon name="home" size={16} />
+          Home
+        </button>
+        <button
+          className="quick accent"
+          type="button"
+          onClick={() => void relay.sendRemoteCommand('playPause')}
+        >
+          <Icon name="play" size={17} />
+          Play or pause
+        </button>
+
+        {relay.pinnedRemoteButtons.map((button) => (
+          <RemoteKey key={`pinned-${button.command}`} button={button} variant="quick" />
+        ))}
+
+        <button className="quick" type="button" onClick={() => setSheetTab('type')}>
+          <Icon name="keyboard" size={16} />
+          Type
+        </button>
+        <button
+          className="quick"
+          type="button"
+          onClick={() => void relay.launchScrcpy()}
+          disabled={
+            relay.busy === 'scrcpy' || !relay.capabilities.typing || !relay.scrcpyStatus.available
+          }
+          title={relay.scrcpyStatus.available ? 'Open the scrcpy mirror' : relay.scrcpyStatus.installHint}
+        >
+          <Icon name="screen" size={16} />
+          Mirror
+        </button>
+        <button className="quick" type="button" onClick={() => setSheetTab('keys')}>
+          <Icon name="more" size={16} />
+          More
+        </button>
       </div>
+
+      <p className="stage-note">
+        Every key, typing, sideloading and the shortcut list live under More · <kbd>⌘K</kbd> for
+        anything
+      </p>
+
+      {sheetTab ? (
+        <Sheet
+          label="More controls"
+          onClose={() => setSheetTab(null)}
+          head={
+            <div className="sheet-tabs" role="tablist">
+              {SHEET_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  className={`sheet-tab${sheetTab === tab.id ? ' is-active' : ''}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={sheetTab === tab.id}
+                  onClick={() => setSheetTab(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          }
+        >
+          {sheetTab === 'keys' ? <KeysPanel /> : null}
+          {sheetTab === 'type' ? <TypePanel /> : null}
+          {sheetTab === 'tools' ? <ToolsPanel /> : null}
+          {sheetTab === 'shortcuts' ? <ShortcutsPanel /> : null}
+        </Sheet>
+      ) : null}
     </div>
   )
 }

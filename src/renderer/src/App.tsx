@@ -3,7 +3,6 @@ import type { FavoriteAppHotkey } from '@shared/types'
 import { RelayContext, useRelay } from './relayContext'
 import { useRelayState } from './useRelayState'
 import { CommandPalette } from './components/CommandPalette'
-import { Sidebar } from './components/Sidebar'
 import { Toasts } from './components/Toasts'
 import { TopBar } from './components/TopBar'
 import { AppsView } from './views/AppsView'
@@ -25,14 +24,11 @@ function Workspace() {
   )
 }
 
-function StatusBar() {
+/** Ambient has no status bar. One quiet line keeps the last outcome on screen. */
+function StatusLine() {
   const relay = useRelay()
 
-  return (
-    <footer className="statusbar">
-      <span>{relay.statusMessage}</span>
-    </footer>
-  )
+  return <p className="statusline">{relay.statusMessage}</p>
 }
 
 export function App() {
@@ -102,12 +98,10 @@ export function App() {
   return (
     <RelayContext.Provider value={relay}>
       <div className="shell">
-        <Sidebar />
-        <div className="shell-main">
-          <TopBar />
-          <Workspace />
-          <StatusBar />
-        </div>
+        <div className="shell-wash" aria-hidden="true" />
+        <TopBar />
+        <Workspace />
+        <StatusLine />
         <CommandPalette />
         <Toasts />
       </div>

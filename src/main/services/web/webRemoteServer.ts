@@ -462,6 +462,8 @@ export class WebRemoteServer extends EventEmitter {
       })),
       capabilities,
       apps,
+      // Whatever the desktop poll last saw. Never issues a fresh ADB call here.
+      foregroundApp: this.options.appController.getCachedForegroundApp(),
       recentApps: (activeDevice?.recentApps ?? []).map((entry) => entry.packageName),
       updatedAt: new Date().toISOString()
     }

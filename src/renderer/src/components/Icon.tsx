@@ -38,6 +38,9 @@ export type IconName =
   | 'sleep'
   | 'plug'
   | 'copy'
+  | 'plus'
+  | 'minus'
+  | 'more'
   | 'up'
   | 'down'
   | 'left'
@@ -221,6 +224,15 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M9 3v6M15 3v6" />
       <path d="M6 9h12v3a6 6 0 0 1-12 0z" />
       <path d="M12 18v3" />
+    </>
+  ),
+  plus: <path d="M12 6v12M6 12h12" />,
+  minus: <path d="M6 12h12" />,
+  more: (
+    <>
+      <circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1.5" fill="currentColor" stroke="none" />
     </>
   ),
   copy: (

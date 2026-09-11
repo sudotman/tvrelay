@@ -3,6 +3,36 @@ import { useRelay } from '../relayContext'
 import { backendLabel, formatConnectionStatus, statusTone, viewTabs } from '../viewModel'
 import { Icon } from './Icon'
 
+/** The four views, centred so the macOS traffic-light inset never shifts them. */
+function ViewNav() {
+  const relay = useRelay()
+
+  return (
+    <nav className="viewnav" aria-label="Views">
+      {viewTabs.map((item) => {
+        const locked = (item.id === 'remote' || item.id === 'apps') && !relay.isConnected
+
+        return (
+          <button
+            key={item.id}
+            className={`viewnav-item${relay.tab === item.id ? ' is-active' : ''}${locked ? ' is-locked' : ''}`}
+            type="button"
+            onClick={() => relay.setTab(item.id)}
+            title={locked ? `${item.label} unlocks once a TV is connected.` : item.detail}
+            aria-current={relay.tab === item.id ? 'page' : undefined}
+          >
+            {item.label}
+          </button>
+        )
+      })}
+    </nav>
+  )
+}
+
+/**
+ * The chip answers "which TV, which backend, connected or not" on its face, and
+ * the popover carries everything else that used to sit in the top bar.
+ */
 function DevicePicker() {
   const relay = useRelay()
   const [open, setOpen] = useState(false)
@@ -36,7 +66,7 @@ function DevicePicker() {
   return (
     <div className="device-picker" ref={ref}>
       <button
-        className={`device-chip tone-${tone}`}
+        className="device-chip"
         type="button"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
@@ -46,7 +76,7 @@ function DevicePicker() {
           <strong>{label}</strong>
           <small>{detail}</small>
         </span>
-        <Icon name="down" size={15} />
+        <Icon name="down" size={14} />
       </button>
 
       {open ? (
@@ -74,6 +104,43 @@ function DevicePicker() {
               </button>
             ))
           )}
+
+          {relay.isConnected ? (
+            <>
+              <div className="popover-divider" />
+              <button
+                className="popover-item"
+                type="button"
+                onClick={() => {
+                  setOpen(false)
+                  void relay.wakeAndReconnect()
+                }}
+                disabled={relay.busy === 'wake' || !relay.capabilities.typing}
+              >
+                <span>
+                  <strong>Wake and reconnect</strong>
+                  <small>Sends an ADB wake, then reconnects</small>
+                </span>
+                <Icon name="wake" size={15} />
+              </button>
+              <button
+                className="popover-item danger"
+                type="button"
+                onClick={() => {
+                  setOpen(false)
+                  void relay.disconnect()
+                }}
+                disabled={relay.busy === 'disconnect'}
+              >
+                <span>
+                  <strong>Disconnect</strong>
+                  <small>Drop the session with {relay.activeDevice?.name ?? 'this TV'}</small>
+                </span>
+                <Icon name="plug" size={15} />
+              </button>
+            </>
+          ) : null}
+
           <div className="popover-divider" />
           <button
             className="popover-item"
@@ -96,41 +163,13 @@ function DevicePicker() {
 
 export function TopBar() {
   const relay = useRelay()
-  const view = viewTabs.find((item) => item.id === relay.tab)
 
   return (
     <header className="topbar">
-      <div className="topbar-lead">
-        <h1>{view?.label}</h1>
-        <p>{view?.detail}</p>
-      </div>
+      <ViewNav />
 
       <div className="topbar-tail">
-        <DevicePicker />
-
-        {relay.isConnected ? (
-          <>
-            <button
-              className="button ghost"
-              type="button"
-              onClick={() => void relay.wakeAndReconnect()}
-              disabled={relay.busy === 'wake' || !relay.capabilities.typing}
-              title="Send an ADB wake, then reconnect"
-            >
-              <Icon name="wake" size={16} />
-              Wake
-            </button>
-            <button
-              className="button ghost danger"
-              type="button"
-              onClick={() => void relay.disconnect()}
-              disabled={relay.busy === 'disconnect'}
-            >
-              <Icon name="plug" size={16} />
-              Disconnect
-            </button>
-          </>
-        ) : (
+        {relay.isConnected ? null : (
           <button
             className="button primary"
             type="button"
@@ -142,10 +181,14 @@ export function TopBar() {
           </button>
         )}
 
+        <DevicePicker />
+
         <button
           className="button ghost palette-trigger"
           type="button"
           onClick={() => relay.setPaletteOpen(true)}
+          title="Open the command palette"
+          aria-label="Open the command palette"
         >
           <Icon name="search" size={16} />
           <kbd>⌘K</kbd>
