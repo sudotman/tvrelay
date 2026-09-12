@@ -105,13 +105,20 @@ function createHarness() {
 describe('WebRemoteServer', () => {
   let harness: ReturnType<typeof createHarness>
   let origin: string
+  let port: number
+
+  // Every test restarts a server, and the HTTP client pools keep-alive sockets
+  // per origin. Sharing one port lets a test inherit a pooled socket belonging
+  // to the server the previous test destroyed, which resets the next request
+  // (ECONNRESET) instead of answering it. A fresh port per test avoids that.
+  let nextPort = 45_871
 
   beforeEach(async () => {
+    port = nextPort++
     harness = createHarness()
     await harness.server.init()
-    // Port 0 asks the OS for a free port; read back what it actually bound.
-    await harness.server.update({ enabled: true, port: 45_871 })
-    origin = `http://127.0.0.1:45871`
+    await harness.server.update({ enabled: true, port })
+    origin = `http://127.0.0.1:${port}`
   })
 
   afterEach(async () => {
@@ -237,7 +244,7 @@ describe('WebRemoteServer', () => {
 
     expect(after).not.toBe(before)
 
-    const response = await fetch(`http://127.0.0.1:45871/api/snapshot`, {
+    const response = await fetch(`${origin}/api/snapshot`, {
       headers: { 'X-Relay-Token': before }
     })
     expect(response.status).toBe(401)
@@ -254,10 +261,10 @@ describe('WebRemoteServer', () => {
     await harness.server.update({ enabled: false })
 
     const squatter = http.createServer()
-    await new Promise<void>((resolve) => squatter.listen(45_871, '0.0.0.0', resolve))
+    await new Promise<void>((resolve) => squatter.listen(port, '0.0.0.0', resolve))
 
     try {
-      const status = await harness.server.update({ enabled: true, port: 45_871 })
+      const status = await harness.server.update({ enabled: true, port })
 
       expect(status.running).toBe(false)
       expect(status.lastError).toMatch(/already in use/i)
@@ -271,7 +278,9 @@ describe('WebRemoteServer', () => {
     const status = harness.server.getStatus()
 
     expect(status.running).toBe(true)
-    expect(status.primaryUrl).toMatch(/^http:\/\/\d+\.\d+\.\d+\.\d+:45871\/\?t=/)
+    expect(status.primaryUrl).toMatch(
+      new RegExp(`^http://\\d+\\.\\d+\\.\\d+\\.\\d+:${port}/\\?t=`)
+    )
     expect(status.qrSvg).toContain('<svg')
   })
 })
