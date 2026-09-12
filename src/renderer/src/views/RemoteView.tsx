@@ -444,7 +444,14 @@ export function RemoteView() {
           label="More controls"
           onClose={() => setSheetTab(null)}
           head={
-            <div className="sheet-tabs" role="tablist">
+            <div
+              className="sheet-tabs"
+              role="tablist"
+              style={
+                { '--tab-index': SHEET_TABS.findIndex((tab) => tab.id === sheetTab) } as React.CSSProperties
+              }
+            >
+              <span className="sheet-tabs-thumb" aria-hidden="true" />
               {SHEET_TABS.map((tab) => (
                 <button
                   key={tab.id}

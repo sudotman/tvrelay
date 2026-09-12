@@ -1,4 +1,6 @@
 import { useEffect, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { useDismiss } from '../useDismiss'
 import { Icon } from './Icon'
 
 /**
@@ -16,20 +18,28 @@ export function Sheet({
   onClose: () => void
   children: ReactNode
 }) {
+  const { closing, dismiss } = useDismiss(true, onClose)
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.stopPropagation()
-        onClose()
+        dismiss()
       }
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
+  }, [dismiss])
 
-  return (
-    <div className="sheet-scrim" role="presentation" onMouseDown={onClose}>
+  // Portalled to the body: the workspace is its own stacking context, so a
+  // sheet rendered inside it would sit under the status line.
+  return createPortal(
+    <div
+      className={`sheet-scrim${closing ? ' is-closing' : ''}`}
+      role="presentation"
+      onMouseDown={dismiss}
+    >
       <section
         className="sheet"
         role="dialog"
@@ -40,12 +50,13 @@ export function Sheet({
         <div className="sheet-grip" aria-hidden="true" />
         <header className="sheet-head">
           {head}
-          <button className="sheet-close" type="button" onClick={onClose} aria-label="Close">
+          <button className="sheet-close" type="button" onClick={dismiss} aria-label="Close">
             <Icon name="close" size={15} />
           </button>
         </header>
         <div className="sheet-body">{children}</div>
       </section>
-    </div>
+    </div>,
+    document.body
   )
 }

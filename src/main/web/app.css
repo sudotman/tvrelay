@@ -11,32 +11,60 @@
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", system-ui, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  --bg: #100e0e;
-  --surface: #1a1615;
+  /* Same seven-step scale as the desktop app, one notch up for thumbs. */
+  --t-micro: 0.6875rem;
+  --t-xs: 0.78rem;
+  --t-sm: 0.85rem;
+  --t-md: 0.94rem;
+  --t-lg: 1.05rem;
+  --t-xl: 1.3rem;
+
+  --w-regular: 400;
+  --w-medium: 500;
+  --w-semibold: 600;
+  --w-bold: 700;
+
+  --track-label: 0.09em;
+
+  --bg: #0f0d0d;
+  --surface: #191514;
 
   --ink: #f6f1ee;
-  --dim: #b6a9a3;
-  --faint: #82736d;
+  --dim: #b2a5a0;
+  --faint: #7e706a;
 
-  --glass: rgba(255, 255, 255, 0.055);
-  --glass-2: rgba(255, 255, 255, 0.1);
-  --glass-line: rgba(255, 255, 255, 0.12);
-  --glass-line-strong: rgba(255, 255, 255, 0.22);
+  --glass: rgba(255, 255, 255, 0.05);
+  --glass-2: rgba(255, 255, 255, 0.085);
+  --glass-3: rgba(255, 255, 255, 0.13);
+  --glass-line: rgba(255, 255, 255, 0.1);
+  --glass-line-strong: rgba(255, 255, 255, 0.2);
+  --well: rgba(0, 0, 0, 0.22);
 
   --ember: #ff7a59;
-  --ember-2: #ffb08a;
+  --ember-2: #ffa184;
   --ember-ink: #2a0d05;
   --ember-soft: rgba(255, 122, 89, 0.15);
+  --ember-glow: rgba(255, 122, 89, 0.3);
 
   --live: #5fc8c3;
   --warning: #f2b65a;
   --danger: #ff5c7a;
 
   --radius-xl: 26px;
-  --radius-lg: 20px;
-  --radius: 14px;
+  --radius-lg: 18px;
+  --radius: 13px;
+  --radius-pill: 999px;
 
-  --ease: cubic-bezier(0.2, 0.9, 0.3, 1);
+  /* Three durations and three curves, matching the desktop app. */
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 340ms;
+
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
 
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -106,20 +134,64 @@ svg {
   border-radius: 50%;
 }
 
+.wash {
+  background:
+    radial-gradient(120% 70% at 50% -12%, rgba(255, 122, 89, 0.13), transparent 60%),
+    radial-gradient(90% 60% at 108% 108%, rgba(95, 200, 195, 0.08), transparent 62%);
+}
+
 .wash::before {
   width: 560px;
   height: 560px;
   left: -180px;
-  top: -220px;
-  background: radial-gradient(circle, rgba(255, 122, 89, 0.32), rgba(255, 122, 89, 0) 68%);
+  top: -240px;
+  background: radial-gradient(circle, rgba(255, 122, 89, 0.14), rgba(255, 122, 89, 0) 64%);
 }
 
+/* Grain, so the falloff on a phone's OLED does not band. */
 .wash::after {
-  width: 520px;
-  height: 520px;
-  right: -190px;
-  bottom: -200px;
-  background: radial-gradient(circle, rgba(95, 200, 195, 0.22), rgba(95, 200, 195, 0) 68%);
+  inset: 0;
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  opacity: 0.04;
+  background-image: var(--grain);
+  background-size: 140px 140px;
+}
+
+/* ==========================================================================
+   One press language
+
+   Everything that takes a tap sinks by the same amount on the same curve, so
+   the phone remote feels like one surface rather than a pile of controls.
+   ========================================================================== */
+
+.primary,
+.secondary,
+.icon-button,
+.quick,
+.vol,
+.tile,
+.app-card,
+.more-trigger,
+.tab {
+  transition:
+    background var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease),
+    scale var(--dur-1) var(--ease);
+}
+
+.primary:active,
+.secondary:active,
+.icon-button:active,
+.quick:active,
+.vol:active,
+.tile:active,
+.app-card:active,
+.more-trigger:active,
+.tab:active {
+  scale: 0.965;
 }
 
 /* ==========================================================================
@@ -169,15 +241,15 @@ svg {
 
 .gate-card h1 {
   margin: 0;
-  font-size: 1.5rem;
-  font-weight: 650;
+  font-size: var(--t-xl);
+  font-weight: var(--w-semibold);
   letter-spacing: -0.02em;
 }
 
 .gate-card p {
   margin: 0;
   color: var(--dim);
-  font-size: 0.9rem;
+  font-size: var(--t-md);
 }
 
 #gate-form {
@@ -211,7 +283,7 @@ textarea:focus {
 
 #gate-input {
   font-family: var(--font-mono);
-  font-size: 1.2rem;
+  font-size: var(--t-lg);
   letter-spacing: 0.22em;
   text-align: center;
 }
@@ -221,7 +293,7 @@ textarea:focus {
   border-radius: 999px;
   background: var(--ember);
   color: var(--ember-ink);
-  font-weight: 650;
+  font-weight: var(--w-semibold);
 }
 
 .primary:active {
@@ -234,13 +306,13 @@ textarea:focus {
   border-radius: 999px;
   background: var(--glass);
   color: var(--dim);
-  font-weight: 550;
+  font-weight: var(--w-medium);
 }
 
 .gate-error {
   min-height: 1.2rem;
   color: var(--danger);
-  font-size: 0.85rem;
+  font-size: var(--t-sm);
 }
 
 /* ==========================================================================
@@ -278,10 +350,11 @@ textarea:focus {
   height: 2.9rem;
   border-radius: 0.85rem;
   overflow: hidden;
-  background: linear-gradient(150deg, hsl(var(--hue, 18) 58% 48%), hsl(var(--hue, 18) 62% 26%));
+  --warm-hue: calc(350 + var(--hue, 18) * 0.22);
+  background: linear-gradient(150deg, hsl(var(--warm-hue) 46% 42%), hsl(var(--warm-hue) 50% 22%));
   color: #fff;
-  font-size: 0.95rem;
-  font-weight: 650;
+  font-size: var(--t-md);
+  font-weight: var(--w-semibold);
 }
 
 .now-art img {
@@ -308,8 +381,8 @@ textarea:focus {
 }
 
 .now-copy strong {
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: var(--t-lg);
+  font-weight: var(--w-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -320,7 +393,7 @@ textarea:focus {
   align-items: center;
   gap: 0.4rem;
   color: var(--faint);
-  font-size: 0.78rem;
+  font-size: var(--t-xs);
   min-width: 0;
 }
 
@@ -417,13 +490,11 @@ textarea:focus {
   width: min(72vw, 17rem);
   aspect-ratio: 1;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: radial-gradient(
-    circle at 50% 34%,
-    rgba(255, 255, 255, 0.13),
-    rgba(255, 255, 255, 0.02) 62%
-  );
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background:
+    radial-gradient(circle at 50% 30%, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.015) 62%),
+    radial-gradient(circle at 50% 110%, rgba(255, 122, 89, 0.07), transparent 55%);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.15);
   touch-action: none;
 }
 
@@ -434,7 +505,8 @@ textarea:focus {
   width: 3.6rem;
   height: 3.6rem;
   border-radius: 50%;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.52);
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
 }
 
 .softpad-dir svg {
@@ -443,57 +515,64 @@ textarea:focus {
 }
 
 .softpad-dir:active {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--ink);
+  background: var(--ember-soft);
+  color: var(--ember-2);
 }
 
 .softpad-dir.up {
   top: 0.3rem;
   left: 50%;
-  transform: translateX(-50%);
+  translate: -50% 0;
 }
 
 .softpad-dir.down {
   bottom: 0.3rem;
   left: 50%;
-  transform: translateX(-50%);
+  translate: -50% 0;
 }
 
 .softpad-dir.left {
   left: 0.3rem;
   top: 50%;
-  transform: translateY(-50%);
+  translate: 0 -50%;
 }
 
 .softpad-dir.right {
   right: 0.3rem;
   top: 50%;
-  transform: translateY(-50%);
+  translate: 0 -50%;
 }
 
+/*
+  Warm off-white rather than pure white: still the centre of a physical remote,
+  without competing with ember for "pressable".
+*/
 .softpad-ok {
   display: grid;
   place-items: center;
   width: 42%;
   aspect-ratio: 1;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.94);
-  color: #171110;
-  font-size: 0.95rem;
-  font-weight: 700;
+  background: radial-gradient(circle at 50% 22%, #fffcfa, #e6ddd8 78%);
+  color: #1b1413;
+  font-size: var(--t-md);
+  font-weight: var(--w-bold);
   letter-spacing: 0.14em;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
-  transition: transform 0.1s var(--ease);
+  box-shadow:
+    0 14px 30px rgba(0, 0, 0, 0.46),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.12),
+    inset 0 2px 3px rgba(255, 255, 255, 0.9);
+  transition: scale var(--dur-1) var(--ease);
 }
 
 .softpad-ok:active {
-  transform: scale(0.95);
+  scale: 0.94;
 }
 
 .pad-hint {
   margin: 0;
   color: var(--faint);
-  font-size: 0.78rem;
+  font-size: var(--t-xs);
 }
 
 .quick-row {
@@ -512,8 +591,8 @@ textarea:focus {
   border-radius: 999px;
   background: var(--glass);
   color: var(--dim);
-  font-size: 0.88rem;
-  font-weight: 550;
+  font-size: var(--t-sm);
+  font-weight: var(--w-medium);
 }
 
 .quick svg {
@@ -530,7 +609,7 @@ textarea:focus {
   border-color: transparent;
   background: var(--ember);
   color: var(--ember-ink);
-  font-weight: 650;
+  font-weight: var(--w-semibold);
 }
 
 .quick.accent:active {
@@ -569,9 +648,9 @@ textarea:focus {
 .vol-label {
   padding: 0 0.2rem;
   color: var(--faint);
-  font-size: 0.62rem;
-  font-weight: 650;
-  letter-spacing: 0.16em;
+  font-size: var(--t-micro);
+  font-weight: var(--w-semibold);
+  letter-spacing: var(--track-label);
 }
 
 .vol-row .vol:last-child {
@@ -586,7 +665,7 @@ textarea:focus {
   padding: 0.7rem;
   border-radius: 999px;
   color: var(--faint);
-  font-size: 0.85rem;
+  font-size: var(--t-sm);
 }
 
 .more-trigger svg {
@@ -627,8 +706,8 @@ textarea:focus {
   border-radius: var(--radius);
   background: var(--glass);
   color: var(--dim);
-  font-size: 0.82rem;
-  font-weight: 550;
+  font-size: var(--t-sm);
+  font-weight: var(--w-medium);
 }
 
 .tile:active {
@@ -669,7 +748,7 @@ textarea:focus {
   border: 0;
   background: none;
   padding: 0.7rem 0;
-  font-size: 0.95rem;
+  font-size: var(--t-md);
 }
 
 .search input:focus {
@@ -715,14 +794,15 @@ textarea:focus {
 .app-card .fallback {
   display: grid;
   place-items: center;
-  background: linear-gradient(150deg, hsl(var(--hue) 58% 48%), hsl(var(--hue) 62% 26%));
+  --warm-hue: calc(350 + var(--hue, 18) * 0.22);
+  background: linear-gradient(150deg, hsl(var(--warm-hue) 46% 44%), hsl(var(--warm-hue) 50% 24%));
   color: #fff;
-  font-size: 0.9rem;
-  font-weight: 650;
+  font-size: var(--t-md);
+  font-weight: var(--w-semibold);
 }
 
 .app-card span {
-  font-size: 0.76rem;
+  font-size: var(--t-xs);
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
@@ -732,7 +812,7 @@ textarea:focus {
   top: 0.35rem;
   right: 0.45rem;
   color: var(--ember);
-  font-size: 0.7rem;
+  font-size: var(--t-micro);
   font-style: normal;
 }
 
@@ -740,7 +820,7 @@ textarea:focus {
   margin: 0;
   padding: 1.5rem 0.5rem;
   color: var(--faint);
-  font-size: 0.88rem;
+  font-size: var(--t-sm);
   text-align: center;
 }
 
@@ -760,7 +840,7 @@ textarea:focus {
 
 .type-card label {
   color: var(--dim);
-  font-size: 0.85rem;
+  font-size: var(--t-sm);
 }
 
 .type-actions {
@@ -775,7 +855,7 @@ textarea:focus {
   padding: 0.85rem 1rem;
   border-radius: var(--radius);
   background: rgba(0, 0, 0, 0.22);
-  font-size: 0.82rem;
+  font-size: var(--t-sm);
 }
 
 .type-hint strong {
@@ -791,28 +871,57 @@ textarea:focus {
    ========================================================================== */
 
 .tabbar {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 2px;
   padding: 4px;
   border: 1px solid var(--glass-line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--glass);
   backdrop-filter: blur(20px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/*
+  The thumb rides on `:has()` rather than a class the script has to maintain,
+  so the tab bar stays in sync with whatever marked itself active.
+*/
+.tabbar::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: calc((100% - 12px) / 3);
+  height: calc(100% - 8px);
+  border-radius: var(--radius-pill);
+  background: var(--glass-3);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 2px 8px rgba(0, 0, 0, 0.3);
+  translate: calc(var(--tab-i, 0) * (100% + 2px)) 0;
+  transition: translate var(--dur-2) var(--ease);
+}
+
+.tabbar:has(.tab:nth-child(2).is-active)::before {
+  --tab-i: 1;
+}
+
+.tabbar:has(.tab:nth-child(3).is-active)::before {
+  --tab-i: 2;
 }
 
 .tab {
+  position: relative;
   padding: 0.65rem 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--dim);
-  font-size: 0.88rem;
-  font-weight: 550;
+  font-size: var(--t-sm);
+  font-weight: var(--w-medium);
+  transition: color var(--dur-1) var(--ease);
 }
 
 .tab.is-active {
-  background: var(--ink);
-  color: #171110;
-  font-weight: 650;
+  color: var(--ink);
+  font-weight: var(--w-semibold);
 }
 
 .toast {
@@ -826,10 +935,10 @@ textarea:focus {
   border-radius: 999px;
   background: var(--surface);
   color: var(--ink);
-  font-size: 0.85rem;
+  font-size: var(--t-sm);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.18s var(--ease), transform 0.18s var(--ease);
+  transition: opacity var(--dur-2) var(--ease), transform var(--dur-2) var(--ease-out);
 }
 
 .toast.is-visible {
@@ -843,9 +952,12 @@ textarea:focus {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .toast,
-  .softpad-ok {
-    transition: none;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 

@@ -38,7 +38,19 @@ jobs:
           npm run prepare:scrcpy
           test -x vendor/scrcpy/scrcpy
           test -x vendor/scrcpy/adb
+          test -s build/icon.icns
           npx electron-builder --mac dmg zip --publish never
+
+      - name: Verify the app icon was applied
+        run: |
+          # electron-builder leaves Electron's own electron.icns in place when
+          # no icon is configured, which is exactly the regression this guards.
+          APP=$(find release -maxdepth 2 -name 'Relay.app' -print -quit)
+          test -n "$APP" || { echo "Relay.app was not produced"; exit 1; }
+          test -f "$APP/Contents/Resources/icon.icns" \
+            || { echo "Packaged app is missing icon.icns"; exit 1; }
+          test ! -f "$APP/Contents/Resources/electron.icns" \
+            || { echo "Packaged app still carries the default Electron icon"; exit 1; }
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
@@ -75,7 +87,18 @@ jobs:
           npm run prepare:scrcpy
           if (-not (Test-Path "vendor/scrcpy/scrcpy.exe")) { throw "scrcpy.exe was not prepared" }
           if (-not (Test-Path "vendor/scrcpy/adb.exe")) { throw "adb.exe was not prepared" }
+          if (-not (Test-Path "build/icon.ico")) { throw "build/icon.ico is missing" }
           npx electron-builder --win nsis zip --publish never
+
+      - name: Verify the packaged app and installer
+        shell: pwsh
+        run: |
+          if (-not (Get-ChildItem release -Filter 'Relay.exe' -Recurse)) {
+            throw "Relay.exe was not produced"
+          }
+          if (-not (Get-ChildItem release -Filter 'Relay-*.exe')) {
+            throw "No Windows installer was produced under the expected name"
+          }
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -103,9 +126,14 @@ jobs:
           name: release-windows
           path: release-artifacts/windows
 
+      - name: Resolve release version
+        id: meta
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          name: Relay ${{ steps.meta.outputs.version }}
           generate_release_notes: true
           overwrite_files: true
           files: |

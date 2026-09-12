@@ -14,12 +14,15 @@ import { favoriteHotkeys, keyBindings, shouldHandleRemoteKey } from './viewModel
 function Workspace() {
   const relay = useRelay()
 
+  // Keyed on the tab so the entrance replays on every switch.
   return (
     <main className="workspace">
-      {relay.tab === 'remote' ? <RemoteView /> : null}
-      {relay.tab === 'apps' ? <AppsView /> : null}
-      {relay.tab === 'setup' ? <SetupView /> : null}
-      {relay.tab === 'phone' ? <PhoneView /> : null}
+      <div className="view" key={relay.tab}>
+        {relay.tab === 'remote' ? <RemoteView /> : null}
+        {relay.tab === 'apps' ? <AppsView /> : null}
+        {relay.tab === 'setup' ? <SetupView /> : null}
+        {relay.tab === 'phone' ? <PhoneView /> : null}
+      </div>
     </main>
   )
 }
@@ -28,7 +31,12 @@ function Workspace() {
 function StatusLine() {
   const relay = useRelay()
 
-  return <p className="statusline">{relay.statusMessage}</p>
+  // Keyed on the message so a new outcome fades in instead of swapping.
+  return (
+    <p className="statusline">
+      <span key={relay.statusMessage}>{relay.statusMessage}</span>
+    </p>
+  )
 }
 
 export function App() {

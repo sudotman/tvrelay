@@ -8,7 +8,7 @@ import type {
   SavedDevice
 } from '@shared/types'
 
-const CLIENT_NAME = 'Android TV Remote Desktop'
+const CLIENT_NAME = 'Relay'
 const DISCOVERY_TIMEOUT_MS = 4_000
 const CONNECT_TIMEOUT_MS = 10_000
 const PAIRING_CONFIRM_TIMEOUT_MS = 15_000

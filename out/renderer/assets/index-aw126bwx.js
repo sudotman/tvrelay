@@ -13896,6 +13896,35 @@ function useRelayState() {
     updateWebRemote
   };
 }
+const prefersReducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+function useDismiss(open, onClose, durationMs = 200) {
+  const [closing, setClosing] = reactExports.useState(false);
+  const timer = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    if (open) {
+      setClosing(false);
+    }
+  }, [open]);
+  reactExports.useEffect(
+    () => () => {
+      if (timer.current !== null) {
+        window.clearTimeout(timer.current);
+      }
+    },
+    []
+  );
+  const dismiss = reactExports.useCallback(() => {
+    if (timer.current !== null) {
+      return;
+    }
+    setClosing(true);
+    timer.current = window.setTimeout(() => {
+      timer.current = null;
+      onClose();
+    }, prefersReducedMotion() ? 0 : durationMs);
+  }, [durationMs, onClose]);
+  return { closing, dismiss };
+}
 const PATHS = {
   remote: /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "7", y: "2", width: "10", height: "20", rx: "4" }),
@@ -14083,6 +14112,8 @@ function CommandPalette() {
   const relay = useRelay();
   const [highlight, setHighlight] = reactExports.useState(0);
   const items = relay.visiblePaletteItems;
+  const close = reactExports.useCallback(() => relay.setPaletteOpen(false), [relay.setPaletteOpen]);
+  const { closing, dismiss } = useDismiss(relay.paletteOpen, close, 120);
   reactExports.useEffect(() => {
     setHighlight(0);
   }, [relay.paletteQuery, relay.paletteOpen]);
@@ -14097,71 +14128,79 @@ function CommandPalette() {
       return (current + delta + items.length) % items.length;
     });
   };
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "palette-scrim", role: "presentation", onMouseDown: () => relay.setPaletteOpen(false), children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
-    "section",
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "div",
     {
-      className: "palette",
-      role: "dialog",
-      "aria-modal": "true",
-      "aria-label": "Command palette",
-      onMouseDown: (event) => event.stopPropagation(),
-      children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "palette-input", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "search", size: 17 }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "input",
-            {
-              autoFocus: true,
-              value: relay.paletteQuery,
-              onChange: (event) => relay.setPaletteQuery(event.target.value),
-              onKeyDown: (event) => {
-                if (event.key === "Escape") {
-                  relay.setPaletteOpen(false);
-                  return;
+      className: `palette-scrim${closing ? " is-closing" : ""}`,
+      role: "presentation",
+      onMouseDown: dismiss,
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "section",
+        {
+          className: "palette",
+          role: "dialog",
+          "aria-modal": "true",
+          "aria-label": "Command palette",
+          onMouseDown: (event) => event.stopPropagation(),
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "palette-input", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "search", size: 17 }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "input",
+                {
+                  autoFocus: true,
+                  value: relay.paletteQuery,
+                  onChange: (event) => relay.setPaletteQuery(event.target.value),
+                  onKeyDown: (event) => {
+                    if (event.key === "Escape") {
+                      dismiss();
+                      return;
+                    }
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      move(1);
+                      return;
+                    }
+                    if (event.key === "ArrowUp") {
+                      event.preventDefault();
+                      move(-1);
+                      return;
+                    }
+                    if (event.key === "Enter" && items[highlight]) {
+                      event.preventDefault();
+                      void relay.runPaletteItem(items[highlight]);
+                    }
+                  },
+                  placeholder: "Search commands, apps, TVs, and power tools…"
                 }
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  move(1);
-                  return;
-                }
-                if (event.key === "ArrowUp") {
-                  event.preventDefault();
-                  move(-1);
-                  return;
-                }
-                if (event.key === "Enter" && items[highlight]) {
-                  event.preventDefault();
-                  void relay.runPaletteItem(items[highlight]);
-                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("kbd", { children: "Esc" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "palette-list", children: items.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "palette-empty", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "No commands match that search." }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Try “apps”, “wake”, “scrcpy”, or a saved TV name." })
+            ] }) : items.map((item, index) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "button",
+              {
+                className: `palette-item${index === highlight ? " is-highlighted" : ""}${item.disabled ? " is-disabled" : ""}`,
+                type: "button",
+                onMouseEnter: () => setHighlight(index),
+                onClick: () => void relay.runPaletteItem(item),
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "palette-item-copy", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: item.label }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: item.disabled ? item.disabledReason ?? item.detail : item.detail })
+                  ] }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "palette-section", children: item.section })
+                ]
               },
-              placeholder: "Search commands, apps, TVs, and power tools…"
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("kbd", { children: "Esc" })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "palette-list", children: items.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "palette-empty", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "No commands match that search." }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Try “apps”, “wake”, “scrcpy”, or a saved TV name." })
-        ] }) : items.map((item, index) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-          "button",
-          {
-            className: `palette-item${index === highlight ? " is-highlighted" : ""}${item.disabled ? " is-disabled" : ""}`,
-            type: "button",
-            onMouseEnter: () => setHighlight(index),
-            onClick: () => void relay.runPaletteItem(item),
-            children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "palette-item-copy", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: item.label }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("small", { children: item.disabled ? item.disabledReason ?? item.detail : item.detail })
-              ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "palette-section", children: item.section })
-            ]
-          },
-          item.id
-        )) })
-      ]
+              item.id
+            )) })
+          ]
+        }
+      )
     }
-  ) });
+  );
 }
 const TONE_ICONS = {
   positive: "check",
@@ -14184,21 +14223,36 @@ function Toasts() {
 }
 function ViewNav() {
   const relay = useRelay();
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("nav", { className: "viewnav", "aria-label": "Views", children: viewTabs.map((item) => {
-    const locked = (item.id === "remote" || item.id === "apps") && !relay.isConnected;
-    return /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "button",
-      {
-        className: `viewnav-item${relay.tab === item.id ? " is-active" : ""}${locked ? " is-locked" : ""}`,
-        type: "button",
-        onClick: () => relay.setTab(item.id),
-        title: locked ? `${item.label} unlocks once a TV is connected.` : item.detail,
-        "aria-current": relay.tab === item.id ? "page" : void 0,
-        children: item.label
-      },
-      item.id
-    );
-  }) });
+  const activeIndex = Math.max(
+    0,
+    viewTabs.findIndex((item) => item.id === relay.tab)
+  );
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "nav",
+    {
+      className: "viewnav",
+      "aria-label": "Views",
+      style: { "--nav-index": activeIndex },
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "viewnav-thumb", "aria-hidden": "true" }),
+        viewTabs.map((item) => {
+          const locked = (item.id === "remote" || item.id === "apps") && !relay.isConnected;
+          return /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              className: `viewnav-item${relay.tab === item.id ? " is-active" : ""}${locked ? " is-locked" : ""}`,
+              type: "button",
+              onClick: () => relay.setTab(item.id),
+              title: locked ? `${item.label} unlocks once a TV is connected.` : item.detail,
+              "aria-current": relay.tab === item.id ? "page" : void 0,
+              children: item.label
+            },
+            item.id
+          );
+        })
+      ]
+    }
+  );
 }
 function DevicePicker() {
   const relay = useRelay();
@@ -14752,40 +14806,53 @@ function RemoteKey({
     }
   );
 }
+var reactDomExports = requireReactDom();
 function Sheet({
   label,
   head,
   onClose,
   children
 }) {
+  const { closing, dismiss } = useDismiss(true, onClose);
   reactExports.useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key === "Escape") {
         event.stopPropagation();
-        onClose();
+        dismiss();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sheet-scrim", role: "presentation", onMouseDown: onClose, children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
-    "section",
-    {
-      className: "sheet",
-      role: "dialog",
-      "aria-modal": "true",
-      "aria-label": label,
-      onMouseDown: (event) => event.stopPropagation(),
-      children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sheet-grip", "aria-hidden": "true" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "sheet-head", children: [
-          head,
-          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "sheet-close", type: "button", onClick: onClose, "aria-label": "Close", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "close", size: 15 }) })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sheet-body", children })
-      ]
-    }
-  ) });
+  }, [dismiss]);
+  return reactDomExports.createPortal(
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "div",
+      {
+        className: `sheet-scrim${closing ? " is-closing" : ""}`,
+        role: "presentation",
+        onMouseDown: dismiss,
+        children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "section",
+          {
+            className: "sheet",
+            role: "dialog",
+            "aria-modal": "true",
+            "aria-label": label,
+            onMouseDown: (event) => event.stopPropagation(),
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sheet-grip", "aria-hidden": "true" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "sheet-head", children: [
+                head,
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "sheet-close", type: "button", onClick: dismiss, "aria-label": "Close", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { name: "close", size: 15 }) })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sheet-body", children })
+            ]
+          }
+        )
+      }
+    ),
+    document.body
+  );
 }
 const SHEET_TABS = [
   { id: "keys", label: "Keys" },
@@ -15126,18 +15193,29 @@ function RemoteView() {
       {
         label: "More controls",
         onClose: () => setSheetTab(null),
-        head: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sheet-tabs", role: "tablist", children: SHEET_TABS.map((tab) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
+        head: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "div",
           {
-            className: `sheet-tab${sheetTab === tab.id ? " is-active" : ""}`,
-            type: "button",
-            role: "tab",
-            "aria-selected": sheetTab === tab.id,
-            onClick: () => setSheetTab(tab.id),
-            children: tab.label
-          },
-          tab.id
-        )) }),
+            className: "sheet-tabs",
+            role: "tablist",
+            style: { "--tab-index": SHEET_TABS.findIndex((tab) => tab.id === sheetTab) },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sheet-tabs-thumb", "aria-hidden": "true" }),
+              SHEET_TABS.map((tab) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  className: `sheet-tab${sheetTab === tab.id ? " is-active" : ""}`,
+                  type: "button",
+                  role: "tab",
+                  "aria-selected": sheetTab === tab.id,
+                  onClick: () => setSheetTab(tab.id),
+                  children: tab.label
+                },
+                tab.id
+              ))
+            ]
+          }
+        ),
         children: [
           sheetTab === "keys" ? /* @__PURE__ */ jsxRuntimeExports.jsx(KeysPanel, {}) : null,
           sheetTab === "type" ? /* @__PURE__ */ jsxRuntimeExports.jsx(TypePanel, {}) : null,
@@ -15616,16 +15694,16 @@ function SetupView() {
 }
 function Workspace() {
   const relay = useRelay();
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: "workspace", children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("main", { className: "workspace", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "view", children: [
     relay.tab === "remote" ? /* @__PURE__ */ jsxRuntimeExports.jsx(RemoteView, {}) : null,
     relay.tab === "apps" ? /* @__PURE__ */ jsxRuntimeExports.jsx(AppsView, {}) : null,
     relay.tab === "setup" ? /* @__PURE__ */ jsxRuntimeExports.jsx(SetupView, {}) : null,
     relay.tab === "phone" ? /* @__PURE__ */ jsxRuntimeExports.jsx(PhoneView, {}) : null
-  ] });
+  ] }, relay.tab) });
 }
 function StatusLine() {
   const relay = useRelay();
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "statusline", children: relay.statusMessage });
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "statusline", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: relay.statusMessage }, relay.statusMessage) });
 }
 function App() {
   const relay = useRelayState();

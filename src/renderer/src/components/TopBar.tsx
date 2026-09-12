@@ -3,12 +3,23 @@ import { useRelay } from '../relayContext'
 import { backendLabel, formatConnectionStatus, statusTone, viewTabs } from '../viewModel'
 import { Icon } from './Icon'
 
-/** The four views, centred so the macOS traffic-light inset never shifts them. */
+/** The four views. The top bar's grid keeps them window-centred while there is room. */
 function ViewNav() {
   const relay = useRelay()
+  // One thumb slides between four equal segments, so the active view reads as
+  // a place the app moved to rather than a button that lit up.
+  const activeIndex = Math.max(
+    0,
+    viewTabs.findIndex((item) => item.id === relay.tab)
+  )
 
   return (
-    <nav className="viewnav" aria-label="Views">
+    <nav
+      className="viewnav"
+      aria-label="Views"
+      style={{ '--nav-index': activeIndex } as React.CSSProperties}
+    >
+      <span className="viewnav-thumb" aria-hidden="true" />
       {viewTabs.map((item) => {
         const locked = (item.id === 'remote' || item.id === 'apps') && !relay.isConnected
 

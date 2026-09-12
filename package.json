@@ -1,7 +1,7 @@
 {
   "name": "android-tv-remote-desktop",
   "version": "0.2.0",
-  "description": "Wireless-first Android TV remote desktop app powered by ADB.",
+  "description": "Relay — a wireless-first Android TV remote for macOS and Windows, powered by ADB.",
   "author": "Satyam Kashyap",
   "type": "module",
   "main": "./out/main/index.js",
@@ -9,6 +9,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "prepare:scrcpy": "node scripts/prepare-scrcpy.mjs",
+    "generate:icons": "node scripts/generate-icons.mjs",
     "dist": "npm run build && npm run prepare:scrcpy && electron-builder",
     "release:build": "npm run build && npm run prepare:scrcpy && electron-builder --publish never",
     "release:build:mac": "npm run build && npm run prepare:scrcpy && electron-builder --mac dmg zip --publish never",
@@ -21,7 +22,9 @@
   },
   "build": {
     "appId": "com.satyamkashyap.androidtvremote",
-    "productName": "Android TV Remote",
+    "productName": "Relay",
+    "copyright": "Copyright © 2026 Satyam Kashyap",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "files": [
       "out/**/*",
       "package.json"
@@ -35,22 +38,36 @@
         ]
       }
     ],
+    "directories": {
+      "output": "release"
+    },
     "mac": {
       "identity": null,
+      "icon": "build/icon.icns",
       "target": [
         "dmg",
         "zip"
       ],
-      "category": "public.app-category.utilities"
+      "category": "public.app-category.utilities",
+      "darkModeSupport": true
+    },
+    "dmg": {
+      "title": "${productName} ${version}",
+      "icon": "build/icon.icns"
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis",
         "zip"
       ]
     },
-    "directories": {
-      "output": "release"
+    "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "shortcutName": "Relay",
+      "uninstallDisplayName": "${productName} ${version}"
     }
   },
   "dependencies": {

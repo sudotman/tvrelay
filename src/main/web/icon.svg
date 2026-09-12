@@ -1,11 +1,28 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<!-- The Relay mark: an ember ring lit from the top left, echoing the remote's
+     soft pad. Kept in step with scripts/generate-icons.mjs, which draws the
+     same geometry for the desktop app icons. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Relay">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#ff7a59"/>
-      <stop offset="1" stop-color="#c2451f"/>
+    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b1412"/>
+      <stop offset="1" stop-color="#0a0808"/>
     </linearGradient>
+    <linearGradient id="ember" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff9a74"/>
+      <stop offset="1" stop-color="#c8421c"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop offset="0.48" stop-color="#ff7a59" stop-opacity="0"/>
+      <stop offset="0.733" stop-color="#ff7a59" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#ff7a59" stop-opacity="0"/>
+    </radialGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="#100e0e"/>
-  <circle cx="256" cy="256" r="168" fill="url(#g)"/>
-  <circle cx="256" cy="256" r="72" fill="#100e0e"/>
+
+  <rect width="512" height="512" rx="112" fill="url(#ground)"/>
+  <circle cx="256" cy="256" r="210" fill="url(#glow)"/>
+  <path
+    d="M256 102a154 154 0 1 0 0 308 154 154 0 1 0 0-308zm0 53a101 101 0 1 1 0 202 101 101 0 1 1 0-202z"
+    fill="url(#ember)"
+    fill-rule="evenodd"
+  />
 </svg>

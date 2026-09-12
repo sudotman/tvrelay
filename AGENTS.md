@@ -34,6 +34,30 @@ The direction is **Ambient**: one warm dark room, one glass surface, one accent.
 - Never invent a value the backend cannot report. Volume is a rocker, not a slider, because ADB
   moves volume but never reads it back.
 
+## Design System
+
+Three rules hold the look together. Breaking one is what makes the app feel half-finished, so
+treat them as constraints rather than suggestions.
+
+1. **Ember is the only fill that means "press me."** Nothing else out-shouts it — not white, not
+   a semantic colour. Selected states use glass and weight, not a filled pill. Semantic colour
+   (`--live` / `--warning` / `--danger`) reports state and is never the accent.
+2. **Every value comes from a token.** Type sizes (`--t-*`), weights (`--w-*`), space (`--s-*`),
+   radii, shadows and durations are all declared in the `:root` block. No ad-hoc `0.83rem`, no
+   `font-weight: 550` — the system faces do not have it. If a value is missing, add it to the
+   scale rather than writing a literal.
+3. **Everything pressable moves the same way.** One shared rule sinks every control by the same
+   amount on the same curve. Positioned elements use the `translate` property for placement so
+   `scale` stays free for the press.
+
+Motion is three durations (`--dur-1/2/3`) and three curves (`--ease`, `--ease-out`,
+`--ease-spring`). Views, sheets and the palette animate in *and* out; the segmented controls move
+a thumb rather than repainting a pill. Everything is covered by one `prefers-reduced-motion` rule.
+
+The ambient wash is light, not tint — weak enough that a card sitting on it never looks stained,
+with a grain layer so the falloff does not band. `src/renderer/src/styles.css` and
+`src/main/web/app.css` carry the same token vocabulary; a change to one usually belongs in both.
+
 ## Architecture Rules
 
 - Renderer must not shell out directly.
@@ -86,6 +110,8 @@ The direction is **Ambient**: one warm dark room, one glass surface, one accent.
   The More sheet. The one place the remote view is allowed to hide anything.
 - `src/renderer/src/components/DirectionPad.tsx`
   The soft pad, including the pointer-flick handling that suppresses the click after a swipe.
+- `scripts/generate-icons.mjs`
+  Draws the Relay mark and writes `build/icon.png`, `build/icon.icns` and `build/icon.ico`.
 
 ## Validation Checklist
 
@@ -101,6 +127,12 @@ At minimum, `typecheck` and `build` should pass for UI or service changes.
 
 ## Release Workflow
 
+- The packaged product is **Relay** (`build.productName`). `build.appId` deliberately keeps the
+  older `com.satyamkashyap.androidtvremote` value, because on Windows the app id is what NSIS uses
+  to recognise an existing install.
+- App icons are generated, not hand-drawn: run `npm run generate:icons` after touching
+  `scripts/generate-icons.mjs`, and keep `src/main/web/icon.svg` in step with it. Commit the
+  regenerated `build/` files.
 - Prefer the GitHub Actions release flow over manual one-off packaging.
 - Use the `Version Bump` workflow or `npm version` to change app versions so `package.json`, `package-lock.json`, commit history, and tags stay aligned.
 - Treat `v*` git tags as release triggers.

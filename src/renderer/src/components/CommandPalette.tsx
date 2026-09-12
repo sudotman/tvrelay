@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRelay } from '../relayContext'
+import { useDismiss } from '../useDismiss'
 import { Icon } from './Icon'
 
 export function CommandPalette() {
   const relay = useRelay()
   const [highlight, setHighlight] = useState(0)
   const items = relay.visiblePaletteItems
+  const close = useCallback(() => relay.setPaletteOpen(false), [relay.setPaletteOpen])
+  const { closing, dismiss } = useDismiss(relay.paletteOpen, close, 120)
 
   useEffect(() => {
     setHighlight(0)
@@ -26,7 +29,11 @@ export function CommandPalette() {
   }
 
   return (
-    <div className="palette-scrim" role="presentation" onMouseDown={() => relay.setPaletteOpen(false)}>
+    <div
+      className={`palette-scrim${closing ? ' is-closing' : ''}`}
+      role="presentation"
+      onMouseDown={dismiss}
+    >
       <section
         className="palette"
         role="dialog"
@@ -42,7 +49,7 @@ export function CommandPalette() {
             onChange={(event) => relay.setPaletteQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Escape') {
-                relay.setPaletteOpen(false)
+                dismiss()
                 return
               }
 

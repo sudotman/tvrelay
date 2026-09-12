@@ -15,6 +15,45 @@ import { SideloadController } from './services/sideloadController'
 import { ElectronSettingsStore } from './services/settingsStore'
 import { WebRemoteServer } from './services/web/webRemoteServer'
 
+/**
+ * Electron derives `userData` from the product name, so renaming the app to
+ * Relay would otherwise strand every saved TV and native pairing certificate in
+ * the old directory. Copy them across once, before anything opens a store.
+ *
+ * Safe to delete once no one is upgrading from a build called "Android TV
+ * Remote" any more.
+ */
+function migrateLegacyUserData(): void {
+  try {
+    // Dev runs under Electron's own profile and was never called "Android TV
+    // Remote", so there is nothing there to carry across.
+    if (!app.isPackaged) {
+      return
+    }
+
+    const target = app.getPath('userData')
+
+    if (fs.existsSync(target)) {
+      return
+    }
+
+    const legacy = path.join(path.dirname(target), 'Android TV Remote')
+
+    if (!fs.existsSync(legacy)) {
+      return
+    }
+
+    fs.cpSync(legacy, target, { recursive: true })
+    console.info('Migrated saved devices and settings from the previous app name.')
+  } catch (error) {
+    // A failed migration must never stop the app from opening. The worst case
+    // is an empty device list, which the setup view already handles.
+    console.error('Could not migrate data from the previous app name.', error)
+  }
+}
+
+migrateLegacyUserData()
+
 let mainWindow: BrowserWindow | null = null
 let deviceManager: DeviceManager | null = null
 let webRemoteServer: WebRemoteServer | null = null
@@ -44,7 +83,7 @@ async function createMainWindow(): Promise<void> {
     height: 940,
     minWidth: 1100,
     minHeight: 760,
-    backgroundColor: '#100e0e',
+    backgroundColor: '#0f0d0d',
     titleBarStyle: 'hiddenInset',
     webPreferences: {
       preload,

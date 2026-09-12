@@ -2468,7 +2468,7 @@ class ActionController {
     throw new Error("Unknown quick action.");
   }
 }
-const CLIENT_NAME = "Android TV Remote Desktop";
+const CLIENT_NAME = "Relay";
 const DISCOVERY_TIMEOUT_MS = 4e3;
 const CONNECT_TIMEOUT_MS = 1e4;
 const PAIRING_CONFIRM_TIMEOUT_MS = 15e3;
@@ -3402,7 +3402,7 @@ const indexHtml = `<!doctype html>
       name="viewport"
       content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#100e0e" />
+    <meta name="theme-color" content="#0f0d0d" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -3580,7 +3580,980 @@ const indexHtml = `<!doctype html>
   </body>
 </html>
 `;
-const appCss = '/* ==========================================================================\n   Relay phone remote — Ambient\n   Same room as the desktop app: warm near-black, one soft light each side,\n   one glass surface, ember as the only pressable colour.\n   ========================================================================== */\n\n:root {\n  color-scheme: dark;\n\n  --font-ui:\n    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", system-ui, sans-serif;\n  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;\n\n  --bg: #100e0e;\n  --surface: #1a1615;\n\n  --ink: #f6f1ee;\n  --dim: #b6a9a3;\n  --faint: #82736d;\n\n  --glass: rgba(255, 255, 255, 0.055);\n  --glass-2: rgba(255, 255, 255, 0.1);\n  --glass-line: rgba(255, 255, 255, 0.12);\n  --glass-line-strong: rgba(255, 255, 255, 0.22);\n\n  --ember: #ff7a59;\n  --ember-2: #ffb08a;\n  --ember-ink: #2a0d05;\n  --ember-soft: rgba(255, 122, 89, 0.15);\n\n  --live: #5fc8c3;\n  --warning: #f2b65a;\n  --danger: #ff5c7a;\n\n  --radius-xl: 26px;\n  --radius-lg: 20px;\n  --radius: 14px;\n\n  --ease: cubic-bezier(0.2, 0.9, 0.3, 1);\n\n  --safe-top: env(safe-area-inset-top, 0px);\n  --safe-bottom: env(safe-area-inset-bottom, 0px);\n}\n\n* {\n  box-sizing: border-box;\n  -webkit-tap-highlight-color: transparent;\n}\n\n/* The gate, the app and the more sheet are all toggled with [hidden], and the\n   display rules below would otherwise win over the UA default. */\n[hidden] {\n  display: none !important;\n}\n\nhtml,\nbody {\n  height: 100%;\n  margin: 0;\n  overscroll-behavior: none;\n}\n\nbody {\n  background: var(--bg);\n  color: var(--ink);\n  font-family: var(--font-ui);\n  font-size: 16px;\n  line-height: 1.45;\n  -webkit-font-smoothing: antialiased;\n}\n\nbutton {\n  font: inherit;\n  color: inherit;\n  border: 0;\n  background: none;\n  cursor: pointer;\n}\n\nbutton:disabled {\n  opacity: 0.4;\n}\n\nsvg {\n  display: block;\n  fill: none;\n  stroke: currentColor;\n  stroke-width: 1.8;\n  stroke-linecap: round;\n  stroke-linejoin: round;\n}\n\n/* Two soft lights behind everything. Fixed so the panes scroll over them. */\n.wash {\n  position: fixed;\n  inset: 0;\n  z-index: 0;\n  pointer-events: none;\n  overflow: hidden;\n}\n\n.wash::before,\n.wash::after {\n  content: "";\n  position: absolute;\n  border-radius: 50%;\n}\n\n.wash::before {\n  width: 560px;\n  height: 560px;\n  left: -180px;\n  top: -220px;\n  background: radial-gradient(circle, rgba(255, 122, 89, 0.32), rgba(255, 122, 89, 0) 68%);\n}\n\n.wash::after {\n  width: 520px;\n  height: 520px;\n  right: -190px;\n  bottom: -200px;\n  background: radial-gradient(circle, rgba(95, 200, 195, 0.22), rgba(95, 200, 195, 0) 68%);\n}\n\n/* ==========================================================================\n   Gate\n   ========================================================================== */\n\n.gate {\n  position: relative;\n  z-index: 1;\n  display: grid;\n  place-items: center;\n  min-height: 100dvh;\n  padding: 1.5rem;\n}\n\n.gate-card {\n  display: grid;\n  justify-items: center;\n  gap: 0.6rem;\n  width: 100%;\n  max-width: 21rem;\n  padding: 2rem 1.6rem 1.8rem;\n  border: 1px solid var(--glass-line);\n  border-radius: var(--radius-xl);\n  background: var(--glass);\n  backdrop-filter: blur(24px);\n  text-align: center;\n}\n\n.brand-mark {\n  display: grid;\n  place-items: center;\n  width: 3rem;\n  height: 3rem;\n  margin-bottom: 0.4rem;\n  border-radius: 1rem;\n  background: linear-gradient(150deg, var(--ember), #c2451f);\n}\n\n.brand-mark span {\n  display: block;\n  width: 0.7rem;\n  height: 0.7rem;\n  border-radius: 0.22rem;\n  background: var(--ember-ink);\n}\n\n.gate-card h1 {\n  margin: 0;\n  font-size: 1.5rem;\n  font-weight: 650;\n  letter-spacing: -0.02em;\n}\n\n.gate-card p {\n  margin: 0;\n  color: var(--dim);\n  font-size: 0.9rem;\n}\n\n#gate-form {\n  display: grid;\n  gap: 0.6rem;\n  width: 100%;\n  margin-top: 0.8rem;\n}\n\ninput,\ntextarea {\n  width: 100%;\n  padding: 0.8rem 1rem;\n  border: 1px solid var(--glass-line);\n  border-radius: var(--radius);\n  background: rgba(0, 0, 0, 0.28);\n  color: var(--ink);\n  font: inherit;\n}\n\ninput::placeholder,\ntextarea::placeholder {\n  color: var(--faint);\n}\n\ninput:focus,\ntextarea:focus {\n  outline: none;\n  border-color: var(--ember);\n}\n\n#gate-input {\n  font-family: var(--font-mono);\n  font-size: 1.2rem;\n  letter-spacing: 0.22em;\n  text-align: center;\n}\n\n.primary {\n  padding: 0.85rem 1.2rem;\n  border-radius: 999px;\n  background: var(--ember);\n  color: var(--ember-ink);\n  font-weight: 650;\n}\n\n.primary:active {\n  background: var(--ember-2);\n}\n\n.secondary {\n  padding: 0.85rem 1.2rem;\n  border: 1px solid var(--glass-line);\n  border-radius: 999px;\n  background: var(--glass);\n  color: var(--dim);\n  font-weight: 550;\n}\n\n.gate-error {\n  min-height: 1.2rem;\n  color: var(--danger);\n  font-size: 0.85rem;\n}\n\n/* ==========================================================================\n   Shell\n   ========================================================================== */\n\n.app {\n  position: relative;\n  z-index: 1;\n  display: grid;\n  grid-template-rows: auto minmax(0, 1fr) auto;\n  height: 100dvh;\n  padding: calc(var(--safe-top) + 0.7rem) 0.9rem calc(var(--safe-bottom) + 0.7rem);\n  gap: 0.7rem;\n}\n\n/* --- now playing header ------------------------------------------------ */\n\n.topbar {\n  display: flex;\n  align-items: center;\n  gap: 0.75rem;\n  padding: 0.55rem 0.7rem;\n  border: 1px solid var(--glass-line);\n  border-radius: var(--radius-lg);\n  background: var(--glass);\n  backdrop-filter: blur(20px);\n}\n\n.now-art {\n  display: grid;\n  place-items: center;\n  flex: none;\n  width: 2.9rem;\n  height: 2.9rem;\n  border-radius: 0.85rem;\n  overflow: hidden;\n  background: linear-gradient(150deg, hsl(var(--hue, 18) 58% 48%), hsl(var(--hue, 18) 62% 26%));\n  color: #fff;\n  font-size: 0.95rem;\n  font-weight: 650;\n}\n\n.now-art img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n}\n\n.now-art.is-idle {\n  background: var(--glass-2);\n  color: var(--faint);\n}\n\n.now-art.is-idle svg {\n  width: 1.3rem;\n  height: 1.3rem;\n}\n\n.now-copy {\n  display: grid;\n  gap: 0.1rem;\n  min-width: 0;\n  flex: 1;\n}\n\n.now-copy strong {\n  font-size: 1rem;\n  font-weight: 600;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.now-copy small {\n  display: flex;\n  align-items: center;\n  gap: 0.4rem;\n  color: var(--faint);\n  font-size: 0.78rem;\n  min-width: 0;\n}\n\n.now-copy small span:last-child {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.dot {\n  flex: none;\n  width: 7px;\n  height: 7px;\n  border-radius: 50%;\n  background: var(--faint);\n}\n\n.dot.is-live {\n  background: var(--live);\n  box-shadow: 0 0 9px var(--live);\n}\n\n.dot.is-busy {\n  background: var(--warning);\n}\n\n.dot.is-down {\n  background: var(--danger);\n}\n\n.icon-button {\n  display: grid;\n  place-items: center;\n  flex: none;\n  width: 2.5rem;\n  height: 2.5rem;\n  border: 1px solid var(--glass-line);\n  border-radius: 50%;\n  background: var(--glass);\n  color: var(--dim);\n}\n\n.icon-button svg {\n  width: 1.15rem;\n  height: 1.15rem;\n}\n\n.icon-button.danger {\n  border-color: rgba(255, 92, 122, 0.3);\n  color: var(--danger);\n}\n\n.icon-button:active {\n  background: var(--glass-2);\n}\n\n/* --- panes -------------------------------------------------------------- */\n\n.panes {\n  position: relative;\n  min-height: 0;\n}\n\n.pane {\n  display: none;\n  height: 100%;\n  overflow-y: auto;\n  -webkit-overflow-scrolling: touch;\n}\n\n.pane.is-active {\n  display: flex;\n  flex-direction: column;\n  gap: 0.8rem;\n}\n\n/* ==========================================================================\n   Remote pane\n   ========================================================================== */\n\n.pad-stage {\n  display: grid;\n  justify-items: center;\n  gap: 0.7rem;\n  flex: 1;\n  align-content: center;\n  min-height: 0;\n}\n\n.softpad {\n  position: relative;\n  display: grid;\n  place-items: center;\n  width: min(72vw, 17rem);\n  aspect-ratio: 1;\n  border-radius: 50%;\n  border: 1px solid rgba(255, 255, 255, 0.14);\n  background: radial-gradient(\n    circle at 50% 34%,\n    rgba(255, 255, 255, 0.13),\n    rgba(255, 255, 255, 0.02) 62%\n  );\n  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.16);\n  touch-action: none;\n}\n\n.softpad-dir {\n  position: absolute;\n  display: grid;\n  place-items: center;\n  width: 3.6rem;\n  height: 3.6rem;\n  border-radius: 50%;\n  color: rgba(255, 255, 255, 0.4);\n}\n\n.softpad-dir svg {\n  width: 1.35rem;\n  height: 1.35rem;\n}\n\n.softpad-dir:active {\n  background: rgba(255, 255, 255, 0.1);\n  color: var(--ink);\n}\n\n.softpad-dir.up {\n  top: 0.3rem;\n  left: 50%;\n  transform: translateX(-50%);\n}\n\n.softpad-dir.down {\n  bottom: 0.3rem;\n  left: 50%;\n  transform: translateX(-50%);\n}\n\n.softpad-dir.left {\n  left: 0.3rem;\n  top: 50%;\n  transform: translateY(-50%);\n}\n\n.softpad-dir.right {\n  right: 0.3rem;\n  top: 50%;\n  transform: translateY(-50%);\n}\n\n.softpad-ok {\n  display: grid;\n  place-items: center;\n  width: 42%;\n  aspect-ratio: 1;\n  border-radius: 50%;\n  background: rgba(255, 255, 255, 0.94);\n  color: #171110;\n  font-size: 0.95rem;\n  font-weight: 700;\n  letter-spacing: 0.14em;\n  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);\n  transition: transform 0.1s var(--ease);\n}\n\n.softpad-ok:active {\n  transform: scale(0.95);\n}\n\n.pad-hint {\n  margin: 0;\n  color: var(--faint);\n  font-size: 0.78rem;\n}\n\n.quick-row {\n  display: grid;\n  grid-template-columns: repeat(3, minmax(0, 1fr));\n  gap: 0.5rem;\n}\n\n.quick {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  gap: 0.45rem;\n  padding: 0.85rem 0.5rem;\n  border: 1px solid var(--glass-line);\n  border-radius: 999px;\n  background: var(--glass);\n  color: var(--dim);\n  font-size: 0.88rem;\n  font-weight: 550;\n}\n\n.quick svg {\n  width: 1.05rem;\n  height: 1.05rem;\n}\n\n.quick:active {\n  background: var(--glass-2);\n  color: var(--ink);\n}\n\n.quick.accent {\n  border-color: transparent;\n  background: var(--ember);\n  color: var(--ember-ink);\n  font-weight: 650;\n}\n\n.quick.accent:active {\n  background: var(--ember-2);\n}\n\n.vol-row {\n  display: grid;\n  grid-template-columns: 1fr auto 1fr auto;\n  align-items: center;\n  gap: 0.5rem;\n  padding: 0.35rem;\n  border: 1px solid var(--glass-line);\n  border-radius: 999px;\n  background: var(--glass);\n}\n\n.vol {\n  display: grid;\n  place-items: center;\n  height: 2.8rem;\n  border-radius: 999px;\n  color: var(--dim);\n}\n\n.vol svg {\n  width: 1.25rem;\n  height: 1.25rem;\n}\n\n.vol:active {\n  background: var(--glass-2);\n  color: var(--ink);\n}\n\n.vol-label {\n  padding: 0 0.2rem;\n  color: var(--faint);\n  font-size: 0.62rem;\n  font-weight: 650;\n  letter-spacing: 0.16em;\n}\n\n.vol-row .vol:last-child {\n  border-left: 1px solid var(--glass-line);\n}\n\n.more-trigger {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  gap: 0.5rem;\n  padding: 0.7rem;\n  border-radius: 999px;\n  color: var(--faint);\n  font-size: 0.85rem;\n}\n\n.more-trigger svg {\n  width: 1.1rem;\n  height: 1.1rem;\n  fill: currentColor;\n  stroke: none;\n}\n\n.more-trigger[aria-expanded="true"] {\n  color: var(--ink);\n}\n\n.more-sheet {\n  display: grid;\n  gap: 0.5rem;\n  padding-bottom: 0.3rem;\n}\n\n.row {\n  display: grid;\n  gap: 0.5rem;\n}\n\n.row.three {\n  grid-template-columns: repeat(3, minmax(0, 1fr));\n}\n\n.row.four {\n  grid-template-columns: repeat(4, minmax(0, 1fr));\n}\n\n.tile {\n  display: grid;\n  place-items: center;\n  padding: 0.85rem 0.3rem;\n  border: 1px solid var(--glass-line);\n  border-radius: var(--radius);\n  background: var(--glass);\n  color: var(--dim);\n  font-size: 0.82rem;\n  font-weight: 550;\n}\n\n.tile:active {\n  background: var(--glass-2);\n  color: var(--ink);\n}\n\n/* ==========================================================================\n   Apps pane\n   ========================================================================== */\n\n.pane-head {\n  display: flex;\n  align-items: center;\n  gap: 0.5rem;\n  padding-bottom: 0.1rem;\n}\n\n.search {\n  display: flex;\n  align-items: center;\n  gap: 0.5rem;\n  flex: 1;\n  padding: 0 0.9rem;\n  border: 1px solid var(--glass-line);\n  border-radius: 999px;\n  background: var(--glass);\n  color: var(--faint);\n}\n\n.search svg {\n  flex: none;\n  width: 1.05rem;\n  height: 1.05rem;\n}\n\n.search input {\n  border: 0;\n  background: none;\n  padding: 0.7rem 0;\n  font-size: 0.95rem;\n}\n\n.search input:focus {\n  border: 0;\n}\n\n.app-grid {\n  display: grid;\n  grid-template-columns: repeat(auto-fill, minmax(5.4rem, 1fr));\n  gap: 0.6rem;\n  padding-bottom: 0.5rem;\n}\n\n.app-card {\n  position: relative;\n  display: grid;\n  justify-items: center;\n  gap: 0.4rem;\n  padding: 0.8rem 0.35rem 0.7rem;\n  border: 1px solid var(--glass-line);\n  border-radius: var(--radius-lg);\n  background: var(--glass);\n  color: var(--ink);\n  text-align: center;\n}\n\n.app-card:active {\n  background: var(--glass-2);\n}\n\n.app-card.is-busy {\n  opacity: 0.5;\n}\n\n.app-card img,\n.app-card .fallback {\n  width: 2.9rem;\n  height: 2.9rem;\n  border-radius: 0.85rem;\n  object-fit: cover;\n}\n\n.app-card .fallback {\n  display: grid;\n  place-items: center;\n  background: linear-gradient(150deg, hsl(var(--hue) 58% 48%), hsl(var(--hue) 62% 26%));\n  color: #fff;\n  font-size: 0.9rem;\n  font-weight: 650;\n}\n\n.app-card span {\n  font-size: 0.76rem;\n  line-height: 1.25;\n  overflow-wrap: anywhere;\n}\n\n.app-card .pin {\n  position: absolute;\n  top: 0.35rem;\n  right: 0.45rem;\n  color: var(--ember);\n  font-size: 0.7rem;\n  font-style: normal;\n}\n\n.empty {\n  margin: 0;\n  padding: 1.5rem 0.5rem;\n  color: var(--faint);\n  font-size: 0.88rem;\n  text-align: center;\n}\n\n/* ==========================================================================\n   Type pane\n   ========================================================================== */\n\n.type-card {\n  display: grid;\n  gap: 0.6rem;\n  padding: 1rem;\n  border: 1px solid var(--glass-line);\n  border-radius: var(--radius-lg);\n  background: var(--glass);\n  backdrop-filter: blur(20px);\n}\n\n.type-card label {\n  color: var(--dim);\n  font-size: 0.85rem;\n}\n\n.type-actions {\n  display: grid;\n  grid-template-columns: 1fr auto;\n  gap: 0.5rem;\n}\n\n.type-hint {\n  display: grid;\n  gap: 0.15rem;\n  padding: 0.85rem 1rem;\n  border-radius: var(--radius);\n  background: rgba(0, 0, 0, 0.22);\n  font-size: 0.82rem;\n}\n\n.type-hint strong {\n  color: var(--ink);\n}\n\n.type-hint span {\n  color: var(--faint);\n}\n\n/* ==========================================================================\n   Tab bar and toast\n   ========================================================================== */\n\n.tabbar {\n  display: grid;\n  grid-template-columns: repeat(3, minmax(0, 1fr));\n  gap: 2px;\n  padding: 4px;\n  border: 1px solid var(--glass-line);\n  border-radius: 999px;\n  background: var(--glass);\n  backdrop-filter: blur(20px);\n}\n\n.tab {\n  padding: 0.65rem 0;\n  border-radius: 999px;\n  color: var(--dim);\n  font-size: 0.88rem;\n  font-weight: 550;\n}\n\n.tab.is-active {\n  background: var(--ink);\n  color: #171110;\n  font-weight: 650;\n}\n\n.toast {\n  position: fixed;\n  left: 50%;\n  bottom: calc(var(--safe-bottom) + 5.2rem);\n  z-index: 20;\n  transform: translate(-50%, 8px);\n  padding: 0.6rem 1.1rem;\n  border: 1px solid var(--glass-line);\n  border-radius: 999px;\n  background: var(--surface);\n  color: var(--ink);\n  font-size: 0.85rem;\n  opacity: 0;\n  pointer-events: none;\n  transition: opacity 0.18s var(--ease), transform 0.18s var(--ease);\n}\n\n.toast.is-visible {\n  opacity: 1;\n  transform: translate(-50%, 0);\n}\n\n.toast.is-error {\n  border-color: var(--danger);\n  color: var(--danger);\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .toast,\n  .softpad-ok {\n    transition: none;\n  }\n}\n\n/* Short phones: give the pad less room rather than clipping the controls. */\n@media (max-height: 700px) {\n  .softpad {\n    width: min(58vw, 13.5rem);\n  }\n\n  .quick {\n    padding: 0.7rem 0.5rem;\n  }\n}\n';
+const appCss = `/* ==========================================================================
+   Relay phone remote — Ambient
+   Same room as the desktop app: warm near-black, one soft light each side,
+   one glass surface, ember as the only pressable colour.
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Same seven-step scale as the desktop app, one notch up for thumbs. */
+  --t-micro: 0.6875rem;
+  --t-xs: 0.78rem;
+  --t-sm: 0.85rem;
+  --t-md: 0.94rem;
+  --t-lg: 1.05rem;
+  --t-xl: 1.3rem;
+
+  --w-regular: 400;
+  --w-medium: 500;
+  --w-semibold: 600;
+  --w-bold: 700;
+
+  --track-label: 0.09em;
+
+  --bg: #0f0d0d;
+  --surface: #191514;
+
+  --ink: #f6f1ee;
+  --dim: #b2a5a0;
+  --faint: #7e706a;
+
+  --glass: rgba(255, 255, 255, 0.05);
+  --glass-2: rgba(255, 255, 255, 0.085);
+  --glass-3: rgba(255, 255, 255, 0.13);
+  --glass-line: rgba(255, 255, 255, 0.1);
+  --glass-line-strong: rgba(255, 255, 255, 0.2);
+  --well: rgba(0, 0, 0, 0.22);
+
+  --ember: #ff7a59;
+  --ember-2: #ffa184;
+  --ember-ink: #2a0d05;
+  --ember-soft: rgba(255, 122, 89, 0.15);
+  --ember-glow: rgba(255, 122, 89, 0.3);
+
+  --live: #5fc8c3;
+  --warning: #f2b65a;
+  --danger: #ff5c7a;
+
+  --radius-xl: 26px;
+  --radius-lg: 18px;
+  --radius: 13px;
+  --radius-pill: 999px;
+
+  /* Three durations and three curves, matching the desktop app. */
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 340ms;
+
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The gate, the app and the more sheet are all toggled with [hidden], and the
+   display rules below would otherwise win over the UA default. */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overscroll-behavior: none;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.4;
+}
+
+svg {
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Two soft lights behind everything. Fixed so the panes scroll over them. */
+.wash {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.wash::before,
+.wash::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+}
+
+.wash {
+  background:
+    radial-gradient(120% 70% at 50% -12%, rgba(255, 122, 89, 0.13), transparent 60%),
+    radial-gradient(90% 60% at 108% 108%, rgba(95, 200, 195, 0.08), transparent 62%);
+}
+
+.wash::before {
+  width: 560px;
+  height: 560px;
+  left: -180px;
+  top: -240px;
+  background: radial-gradient(circle, rgba(255, 122, 89, 0.14), rgba(255, 122, 89, 0) 64%);
+}
+
+/* Grain, so the falloff on a phone's OLED does not band. */
+.wash::after {
+  inset: 0;
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  opacity: 0.04;
+  background-image: var(--grain);
+  background-size: 140px 140px;
+}
+
+/* ==========================================================================
+   One press language
+
+   Everything that takes a tap sinks by the same amount on the same curve, so
+   the phone remote feels like one surface rather than a pile of controls.
+   ========================================================================== */
+
+.primary,
+.secondary,
+.icon-button,
+.quick,
+.vol,
+.tile,
+.app-card,
+.more-trigger,
+.tab {
+  transition:
+    background var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease),
+    scale var(--dur-1) var(--ease);
+}
+
+.primary:active,
+.secondary:active,
+.icon-button:active,
+.quick:active,
+.vol:active,
+.tile:active,
+.app-card:active,
+.more-trigger:active,
+.tab:active {
+  scale: 0.965;
+}
+
+/* ==========================================================================
+   Gate
+   ========================================================================== */
+
+.gate {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: 1.5rem;
+}
+
+.gate-card {
+  display: grid;
+  justify-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  max-width: 21rem;
+  padding: 2rem 1.6rem 1.8rem;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius-xl);
+  background: var(--glass);
+  backdrop-filter: blur(24px);
+  text-align: center;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  margin-bottom: 0.4rem;
+  border-radius: 1rem;
+  background: linear-gradient(150deg, var(--ember), #c2451f);
+}
+
+.brand-mark span {
+  display: block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 0.22rem;
+  background: var(--ember-ink);
+}
+
+.gate-card h1 {
+  margin: 0;
+  font-size: var(--t-xl);
+  font-weight: var(--w-semibold);
+  letter-spacing: -0.02em;
+}
+
+.gate-card p {
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--t-md);
+}
+
+#gate-form {
+  display: grid;
+  gap: 0.6rem;
+  width: 100%;
+  margin-top: 0.8rem;
+}
+
+input,
+textarea {
+  width: 100%;
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--ink);
+  font: inherit;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--faint);
+}
+
+input:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--ember);
+}
+
+#gate-input {
+  font-family: var(--font-mono);
+  font-size: var(--t-lg);
+  letter-spacing: 0.22em;
+  text-align: center;
+}
+
+.primary {
+  padding: 0.85rem 1.2rem;
+  border-radius: 999px;
+  background: var(--ember);
+  color: var(--ember-ink);
+  font-weight: var(--w-semibold);
+}
+
+.primary:active {
+  background: var(--ember-2);
+}
+
+.secondary {
+  padding: 0.85rem 1.2rem;
+  border: 1px solid var(--glass-line);
+  border-radius: 999px;
+  background: var(--glass);
+  color: var(--dim);
+  font-weight: var(--w-medium);
+}
+
+.gate-error {
+  min-height: 1.2rem;
+  color: var(--danger);
+  font-size: var(--t-sm);
+}
+
+/* ==========================================================================
+   Shell
+   ========================================================================== */
+
+.app {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100dvh;
+  padding: calc(var(--safe-top) + 0.7rem) 0.9rem calc(var(--safe-bottom) + 0.7rem);
+  gap: 0.7rem;
+}
+
+/* --- now playing header ------------------------------------------------ */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius-lg);
+  background: var(--glass);
+  backdrop-filter: blur(20px);
+}
+
+.now-art {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2.9rem;
+  height: 2.9rem;
+  border-radius: 0.85rem;
+  overflow: hidden;
+  --warm-hue: calc(350 + var(--hue, 18) * 0.22);
+  background: linear-gradient(150deg, hsl(var(--warm-hue) 46% 42%), hsl(var(--warm-hue) 50% 22%));
+  color: #fff;
+  font-size: var(--t-md);
+  font-weight: var(--w-semibold);
+}
+
+.now-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.now-art.is-idle {
+  background: var(--glass-2);
+  color: var(--faint);
+}
+
+.now-art.is-idle svg {
+  width: 1.3rem;
+  height: 1.3rem;
+}
+
+.now-copy {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.now-copy strong {
+  font-size: var(--t-lg);
+  font-weight: var(--w-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.now-copy small {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--faint);
+  font-size: var(--t-xs);
+  min-width: 0;
+}
+
+.now-copy small span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.dot.is-live {
+  background: var(--live);
+  box-shadow: 0 0 9px var(--live);
+}
+
+.dot.is-busy {
+  background: var(--warning);
+}
+
+.dot.is-down {
+  background: var(--danger);
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 1px solid var(--glass-line);
+  border-radius: 50%;
+  background: var(--glass);
+  color: var(--dim);
+}
+
+.icon-button svg {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.icon-button.danger {
+  border-color: rgba(255, 92, 122, 0.3);
+  color: var(--danger);
+}
+
+.icon-button:active {
+  background: var(--glass-2);
+}
+
+/* --- panes -------------------------------------------------------------- */
+
+.panes {
+  position: relative;
+  min-height: 0;
+}
+
+.pane {
+  display: none;
+  height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.pane.is-active {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+/* ==========================================================================
+   Remote pane
+   ========================================================================== */
+
+.pad-stage {
+  display: grid;
+  justify-items: center;
+  gap: 0.7rem;
+  flex: 1;
+  align-content: center;
+  min-height: 0;
+}
+
+.softpad {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(72vw, 17rem);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background:
+    radial-gradient(circle at 50% 30%, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.015) 62%),
+    radial-gradient(circle at 50% 110%, rgba(255, 122, 89, 0.07), transparent 55%);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  touch-action: none;
+}
+
+.softpad-dir {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 3.6rem;
+  height: 3.6rem;
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.52);
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+
+.softpad-dir svg {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+.softpad-dir:active {
+  background: var(--ember-soft);
+  color: var(--ember-2);
+}
+
+.softpad-dir.up {
+  top: 0.3rem;
+  left: 50%;
+  translate: -50% 0;
+}
+
+.softpad-dir.down {
+  bottom: 0.3rem;
+  left: 50%;
+  translate: -50% 0;
+}
+
+.softpad-dir.left {
+  left: 0.3rem;
+  top: 50%;
+  translate: 0 -50%;
+}
+
+.softpad-dir.right {
+  right: 0.3rem;
+  top: 50%;
+  translate: 0 -50%;
+}
+
+/*
+  Warm off-white rather than pure white: still the centre of a physical remote,
+  without competing with ember for "pressable".
+*/
+.softpad-ok {
+  display: grid;
+  place-items: center;
+  width: 42%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 22%, #fffcfa, #e6ddd8 78%);
+  color: #1b1413;
+  font-size: var(--t-md);
+  font-weight: var(--w-bold);
+  letter-spacing: 0.14em;
+  box-shadow:
+    0 14px 30px rgba(0, 0, 0, 0.46),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.12),
+    inset 0 2px 3px rgba(255, 255, 255, 0.9);
+  transition: scale var(--dur-1) var(--ease);
+}
+
+.softpad-ok:active {
+  scale: 0.94;
+}
+
+.pad-hint {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--t-xs);
+}
+
+.quick-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.quick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.85rem 0.5rem;
+  border: 1px solid var(--glass-line);
+  border-radius: 999px;
+  background: var(--glass);
+  color: var(--dim);
+  font-size: var(--t-sm);
+  font-weight: var(--w-medium);
+}
+
+.quick svg {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.quick:active {
+  background: var(--glass-2);
+  color: var(--ink);
+}
+
+.quick.accent {
+  border-color: transparent;
+  background: var(--ember);
+  color: var(--ember-ink);
+  font-weight: var(--w-semibold);
+}
+
+.quick.accent:active {
+  background: var(--ember-2);
+}
+
+.vol-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem;
+  border: 1px solid var(--glass-line);
+  border-radius: 999px;
+  background: var(--glass);
+}
+
+.vol {
+  display: grid;
+  place-items: center;
+  height: 2.8rem;
+  border-radius: 999px;
+  color: var(--dim);
+}
+
+.vol svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.vol:active {
+  background: var(--glass-2);
+  color: var(--ink);
+}
+
+.vol-label {
+  padding: 0 0.2rem;
+  color: var(--faint);
+  font-size: var(--t-micro);
+  font-weight: var(--w-semibold);
+  letter-spacing: var(--track-label);
+}
+
+.vol-row .vol:last-child {
+  border-left: 1px solid var(--glass-line);
+}
+
+.more-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.7rem;
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: var(--t-sm);
+}
+
+.more-trigger svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  fill: currentColor;
+  stroke: none;
+}
+
+.more-trigger[aria-expanded="true"] {
+  color: var(--ink);
+}
+
+.more-sheet {
+  display: grid;
+  gap: 0.5rem;
+  padding-bottom: 0.3rem;
+}
+
+.row {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.row.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.row.four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.tile {
+  display: grid;
+  place-items: center;
+  padding: 0.85rem 0.3rem;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius);
+  background: var(--glass);
+  color: var(--dim);
+  font-size: var(--t-sm);
+  font-weight: var(--w-medium);
+}
+
+.tile:active {
+  background: var(--glass-2);
+  color: var(--ink);
+}
+
+/* ==========================================================================
+   Apps pane
+   ========================================================================== */
+
+.pane-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-bottom: 0.1rem;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  padding: 0 0.9rem;
+  border: 1px solid var(--glass-line);
+  border-radius: 999px;
+  background: var(--glass);
+  color: var(--faint);
+}
+
+.search svg {
+  flex: none;
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.search input {
+  border: 0;
+  background: none;
+  padding: 0.7rem 0;
+  font-size: var(--t-md);
+}
+
+.search input:focus {
+  border: 0;
+}
+
+.app-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(5.4rem, 1fr));
+  gap: 0.6rem;
+  padding-bottom: 0.5rem;
+}
+
+.app-card {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 0.4rem;
+  padding: 0.8rem 0.35rem 0.7rem;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius-lg);
+  background: var(--glass);
+  color: var(--ink);
+  text-align: center;
+}
+
+.app-card:active {
+  background: var(--glass-2);
+}
+
+.app-card.is-busy {
+  opacity: 0.5;
+}
+
+.app-card img,
+.app-card .fallback {
+  width: 2.9rem;
+  height: 2.9rem;
+  border-radius: 0.85rem;
+  object-fit: cover;
+}
+
+.app-card .fallback {
+  display: grid;
+  place-items: center;
+  --warm-hue: calc(350 + var(--hue, 18) * 0.22);
+  background: linear-gradient(150deg, hsl(var(--warm-hue) 46% 44%), hsl(var(--warm-hue) 50% 24%));
+  color: #fff;
+  font-size: var(--t-md);
+  font-weight: var(--w-semibold);
+}
+
+.app-card span {
+  font-size: var(--t-xs);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.app-card .pin {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.45rem;
+  color: var(--ember);
+  font-size: var(--t-micro);
+  font-style: normal;
+}
+
+.empty {
+  margin: 0;
+  padding: 1.5rem 0.5rem;
+  color: var(--faint);
+  font-size: var(--t-sm);
+  text-align: center;
+}
+
+/* ==========================================================================
+   Type pane
+   ========================================================================== */
+
+.type-card {
+  display: grid;
+  gap: 0.6rem;
+  padding: 1rem;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius-lg);
+  background: var(--glass);
+  backdrop-filter: blur(20px);
+}
+
+.type-card label {
+  color: var(--dim);
+  font-size: var(--t-sm);
+}
+
+.type-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem;
+}
+
+.type-hint {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.22);
+  font-size: var(--t-sm);
+}
+
+.type-hint strong {
+  color: var(--ink);
+}
+
+.type-hint span {
+  color: var(--faint);
+}
+
+/* ==========================================================================
+   Tab bar and toast
+   ========================================================================== */
+
+.tabbar {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius-pill);
+  background: var(--glass);
+  backdrop-filter: blur(20px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/*
+  The thumb rides on \`:has()\` rather than a class the script has to maintain,
+  so the tab bar stays in sync with whatever marked itself active.
+*/
+.tabbar::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: calc((100% - 12px) / 3);
+  height: calc(100% - 8px);
+  border-radius: var(--radius-pill);
+  background: var(--glass-3);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 2px 8px rgba(0, 0, 0, 0.3);
+  translate: calc(var(--tab-i, 0) * (100% + 2px)) 0;
+  transition: translate var(--dur-2) var(--ease);
+}
+
+.tabbar:has(.tab:nth-child(2).is-active)::before {
+  --tab-i: 1;
+}
+
+.tabbar:has(.tab:nth-child(3).is-active)::before {
+  --tab-i: 2;
+}
+
+.tab {
+  position: relative;
+  padding: 0.65rem 0;
+  border-radius: var(--radius-pill);
+  color: var(--dim);
+  font-size: var(--t-sm);
+  font-weight: var(--w-medium);
+  transition: color var(--dur-1) var(--ease);
+}
+
+.tab.is-active {
+  color: var(--ink);
+  font-weight: var(--w-semibold);
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--safe-bottom) + 5.2rem);
+  z-index: 20;
+  transform: translate(-50%, 8px);
+  padding: 0.6rem 1.1rem;
+  border: 1px solid var(--glass-line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--t-sm);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-2) var(--ease), transform var(--dur-2) var(--ease-out);
+}
+
+.toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.toast.is-error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Short phones: give the pad less room rather than clipping the controls. */
+@media (max-height: 700px) {
+  .softpad {
+    width: min(58vw, 13.5rem);
+  }
+
+  .quick {
+    padding: 0.7rem 0.5rem;
+  }
+}
+`;
 const appJs = `/* Relay phone remote client. Plain ES2019 so older phone browsers can run it. */
 ;(function () {
   'use strict'
@@ -4127,8 +5100,36 @@ const appJs = `/* Relay phone remote client. Plain ES2019 so older phone browser
   }
 })()
 `;
-const manifest = '{\n  "name": "Relay Remote",\n  "short_name": "Relay",\n  "description": "Control your Android TV from your phone over the local network.",\n  "start_url": "/",\n  "scope": "/",\n  "display": "standalone",\n  "orientation": "portrait",\n  "background_color": "#100e0e",\n  "theme_color": "#100e0e",\n  "icons": [\n    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }\n  ]\n}\n';
-const iconSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">\n  <defs>\n    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">\n      <stop offset="0" stop-color="#ff7a59"/>\n      <stop offset="1" stop-color="#c2451f"/>\n    </linearGradient>\n  </defs>\n  <rect width="512" height="512" rx="112" fill="#100e0e"/>\n  <circle cx="256" cy="256" r="168" fill="url(#g)"/>\n  <circle cx="256" cy="256" r="72" fill="#100e0e"/>\n</svg>\n';
+const manifest = '{\n  "name": "Relay Remote",\n  "short_name": "Relay",\n  "description": "Control your Android TV from your phone over the local network.",\n  "start_url": "/",\n  "scope": "/",\n  "display": "standalone",\n  "orientation": "portrait",\n  "background_color": "#0f0d0d",\n  "theme_color": "#0f0d0d",\n  "icons": [\n    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }\n  ]\n}\n';
+const iconSvg = `<!-- The Relay mark: an ember ring lit from the top left, echoing the remote's
+     soft pad. Kept in step with scripts/generate-icons.mjs, which draws the
+     same geometry for the desktop app icons. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Relay">
+  <defs>
+    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b1412"/>
+      <stop offset="1" stop-color="#0a0808"/>
+    </linearGradient>
+    <linearGradient id="ember" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff9a74"/>
+      <stop offset="1" stop-color="#c8421c"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop offset="0.48" stop-color="#ff7a59" stop-opacity="0"/>
+      <stop offset="0.733" stop-color="#ff7a59" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#ff7a59" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#ground)"/>
+  <circle cx="256" cy="256" r="210" fill="url(#glow)"/>
+  <path
+    d="M256 102a154 154 0 1 0 0 308 154 154 0 1 0 0-308zm0 53a101 101 0 1 1 0 202 101 101 0 1 1 0-202z"
+    fill="url(#ember)"
+    fill-rule="evenodd"
+  />
+</svg>
+`;
 const WEB_ASSETS = {
   "/index.html": { body: indexHtml, contentType: "text/html; charset=utf-8" },
   "/app.css": { body: appCss, contentType: "text/css; charset=utf-8" },
@@ -4485,6 +5486,26 @@ class WebRemoteServer extends EventEmitter {
     };
   }
 }
+function migrateLegacyUserData() {
+  try {
+    if (!app.isPackaged) {
+      return;
+    }
+    const target = app.getPath("userData");
+    if (fs$1.existsSync(target)) {
+      return;
+    }
+    const legacy = path.join(path.dirname(target), "Android TV Remote");
+    if (!fs$1.existsSync(legacy)) {
+      return;
+    }
+    fs$1.cpSync(legacy, target, { recursive: true });
+    console.info("Migrated saved devices and settings from the previous app name.");
+  } catch (error) {
+    console.error("Could not migrate data from the previous app name.", error);
+  }
+}
+migrateLegacyUserData();
 let mainWindow = null;
 let deviceManager = null;
 let webRemoteServer = null;
@@ -4508,7 +5529,7 @@ async function createMainWindow() {
     height: 940,
     minWidth: 1100,
     minHeight: 760,
-    backgroundColor: "#100e0e",
+    backgroundColor: "#0f0d0d",
     titleBarStyle: "hiddenInset",
     webPreferences: {
       preload,
