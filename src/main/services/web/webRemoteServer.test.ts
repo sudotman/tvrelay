@@ -238,6 +238,65 @@ describe('WebRemoteServer', () => {
     expect(response.status).toBe(404)
   })
 
+  it('trades the access code for a session cookie that outlives the page', async () => {
+    const response = await fetch(`${origin}/api/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: TOKEN.toLowerCase() })
+    })
+    const cookie = response.headers.get('set-cookie') ?? ''
+
+    expect(response.status).toBe(200)
+    expect(cookie).toContain(`relay_session=${TOKEN}`)
+    expect(cookie).toContain('HttpOnly')
+    expect(cookie).toContain('SameSite=Lax')
+    expect(cookie).toMatch(/Max-Age=\d{7,}/)
+  })
+
+  it('rejects a wrong access code without handing out a cookie', async () => {
+    const response = await fetch(`${origin}/api/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: 'WRONGTOKEN99' })
+    })
+
+    expect(response.status).toBe(401)
+    expect(response.headers.get('set-cookie')).toBeNull()
+  })
+
+  it('authorizes later calls from the session cookie alone', async () => {
+    const response = await fetch(`${origin}/api/snapshot`, {
+      headers: { Cookie: `relay_session=${TOKEN}` }
+    })
+
+    expect(response.status).toBe(200)
+    expect((await response.json()).device.id).toBe('tv-1')
+  })
+
+  it('pairs the phone when the scanned link serves the page', async () => {
+    const response = await fetch(`${origin}/?t=${TOKEN}`)
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('set-cookie')).toContain(`relay_session=${TOKEN}`)
+  })
+
+  it('serves the page without a cookie when the link carries no code', async () => {
+    const response = await fetch(`${origin}/`)
+
+    expect(response.headers.get('set-cookie')).toBeNull()
+  })
+
+  it('stops accepting a session cookie once the code is rotated', async () => {
+    const stale = harness.server.getStatus().token
+    await harness.server.update({ rotateToken: true })
+
+    const response = await fetch(`${origin}/api/snapshot`, {
+      headers: { Cookie: `relay_session=${stale}` }
+    })
+
+    expect(response.status).toBe(401)
+  })
+
   it('rotates the token and stops accepting the old one', async () => {
     const before = harness.server.getStatus().token
     const after = (await harness.server.update({ rotateToken: true })).token

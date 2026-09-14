@@ -44,7 +44,7 @@ the desktop app can serve a touch remote over your local network. turn it on in 
 
 - the phone talks only to the desktop app, never to the TV directly - every command still goes through the same ADB/native path
 - off by default, and bound to the LAN only while you have it on
-- protected by a rotating access code; "New code" signs every phone out
+- protected by a rotating access code, entered once per phone — it stays signed in after that, and "New code" signs every phone out
 - installable to the home screen as a PWA, with a d-pad you can tap or swipe, an app grid, and remote typing
 
 ## adb vs native

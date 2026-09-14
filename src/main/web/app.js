@@ -3,6 +3,7 @@
   'use strict'
 
   var TOKEN_KEY = 'relay.token'
+  var PAIRED_KEY = 'relay.paired'
   var byId = function (id) {
     return document.getElementById(id)
   }
@@ -11,49 +12,89 @@
   var stream = null
   var toastTimer = null
 
-  /* ---------------- token handling ---------------- */
+  /* ---------------- pairing ----------------
+
+     Once a code is accepted the desktop app sets an HttpOnly session cookie, so
+     a paired phone stays unlocked across reloads, sleep, desktop restarts and
+     home-screen launches. The copy kept in localStorage is only a fallback for
+     browsers that drop the cookie on us, and the paired flag lets a cold start
+     tell "signed out" apart from "the desktop app is not answering right now". */
+
+  function readStored(key) {
+    try {
+      return window.localStorage.getItem(key) || ''
+    } catch (error) {
+      return ''
+    }
+  }
+
+  function writeStored(key, value) {
+    try {
+      if (value) {
+        window.localStorage.setItem(key, value)
+      } else {
+        window.localStorage.removeItem(key)
+      }
+    } catch (error) {
+      /* Private browsing: this session still works, it just will not outlive itself. */
+    }
+  }
 
   function readTokenFromUrl() {
     var match = /[?&]t=([^&#]+)/.exec(window.location.search || '')
     return match ? decodeURIComponent(match[1]) : ''
   }
 
-  function storedToken() {
-    try {
-      return window.localStorage.getItem(TOKEN_KEY) || ''
-    } catch (error) {
-      return ''
-    }
+  var urlToken = readTokenFromUrl()
+  var token = urlToken || readStored(TOKEN_KEY)
+  var paired = Boolean(token) || readStored(PAIRED_KEY) === '1'
+
+  function rememberPairing(value) {
+    token = value || token
+    paired = true
+    writeStored(TOKEN_KEY, token)
+    writeStored(PAIRED_KEY, '1')
   }
 
-  function saveToken(token) {
-    try {
-      window.localStorage.setItem(TOKEN_KEY, token)
-    } catch (error) {
-      /* Private browsing: the token still lives in memory for this session. */
-    }
+  function forgetPairing() {
+    token = ''
+    paired = false
+    writeStored(TOKEN_KEY, '')
+    writeStored(PAIRED_KEY, '')
   }
 
-  var token = readTokenFromUrl() || storedToken()
-
-  if (readTokenFromUrl()) {
-    saveToken(token)
-    // Keep the code out of the address bar once it is stored.
+  if (urlToken) {
+    // Serving this page with the code already set the cookie, so the phone is
+    // paired; keep the code out of the address bar from here on.
+    rememberPairing(urlToken)
     window.history.replaceState({}, '', window.location.pathname)
   }
 
   /* ---------------- transport ---------------- */
 
+  function authHeaders(extra) {
+    var headers = extra || {}
+
+    if (token) {
+      headers['X-Relay-Token'] = token
+    }
+
+    return headers
+  }
+
   function request(path, body) {
     return fetch(path, {
       method: body ? 'POST' : 'GET',
-      headers: body
-        ? { 'Content-Type': 'application/json', 'X-Relay-Token': token }
-        : { 'X-Relay-Token': token },
+      credentials: 'same-origin',
+      headers: authHeaders(body ? { 'Content-Type': 'application/json' } : {}),
       body: body ? JSON.stringify(body) : undefined
     }).then(function (response) {
       if (response.status === 401) {
-        showGate('That code was not accepted.')
+        var wasPaired = paired
+        forgetPairing()
+        // A first visit has nothing to reject, so it gets a plain gate; only a
+        // phone that thought it was signed in is told its code stopped working.
+        showGate(wasPaired ? 'That code no longer works. Enter the current one.' : '')
         throw new Error('unauthorized')
       }
 
@@ -66,12 +107,22 @@
     })
   }
 
+  function iconUrl(packageName) {
+    // The cookie carries the session; the code is only appended when we still
+    // hold one because the cookie was refused.
+    return (
+      '/api/icon?package=' +
+      encodeURIComponent(packageName) +
+      (token ? '&t=' + encodeURIComponent(token) : '')
+    )
+  }
+
   function openStream() {
     if (stream) {
       stream.close()
     }
 
-    stream = new EventSource('/api/events?t=' + encodeURIComponent(token))
+    stream = new EventSource('/api/events' + (token ? '?t=' + encodeURIComponent(token) : ''))
     stream.onmessage = function (event) {
       applySnapshot(JSON.parse(event.data))
     }
@@ -98,6 +149,38 @@
     byId('app').hidden = false
   }
 
+  /** Trades the code for the session cookie that keeps this phone signed in. */
+  function pair(code) {
+    return fetch('/api/session', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: code })
+    }).then(function (response) {
+      if (!response.ok) {
+        throw new Error(
+          response.status === 401
+            ? 'That code was not accepted.'
+            : 'Could not reach the desktop app.'
+        )
+      }
+
+      rememberPairing(code)
+    })
+  }
+
+  function enterApp() {
+    return request('/api/snapshot').then(function (snapshot) {
+      // The cookie can sign a phone in on its own, so record that it is paired
+      // even when no code was typed; a later offline start then waits instead
+      // of asking for a code the phone does not need.
+      rememberPairing(token)
+      showApp()
+      applySnapshot(snapshot)
+      openStream()
+    })
+  }
+
   byId('gate-form').addEventListener('submit', function (event) {
     event.preventDefault()
     var value = byId('gate-input').value.trim().toUpperCase()
@@ -106,16 +189,12 @@
       return
     }
 
-    token = value
-    request('/api/snapshot')
-      .then(function (snapshot) {
-        saveToken(token)
-        showApp()
-        applySnapshot(snapshot)
-        openStream()
-      })
-      .catch(function () {
-        /* showGate already reported the failure. */
+    pair(value)
+      .then(enterApp)
+      .catch(function (error) {
+        if (error && error.message !== 'unauthorized') {
+          showGate(error.message)
+        }
       })
   })
 
@@ -155,11 +234,7 @@
 
     if (known && known.hasIcon) {
       var img = document.createElement('img')
-      img.src =
-        '/api/icon?package=' +
-        encodeURIComponent(app.packageName) +
-        '&t=' +
-        encodeURIComponent(token)
+      img.src = iconUrl(app.packageName)
       img.alt = ''
       art.appendChild(img)
       return
@@ -278,7 +353,7 @@
 
       if (app.hasIcon) {
         var img = document.createElement('img')
-        img.src = '/api/icon?package=' + encodeURIComponent(app.packageName) + '&t=' + encodeURIComponent(token)
+        img.src = iconUrl(app.packageName)
         img.alt = ''
         img.loading = 'lazy'
         card.appendChild(img)
@@ -529,17 +604,22 @@
 
   /* ---------------- boot ---------------- */
 
-  if (!token) {
-    showGate('')
-  } else {
-    request('/api/snapshot')
-      .then(function (snapshot) {
-        showApp()
-        applySnapshot(snapshot)
-        openStream()
-      })
-      .catch(function () {
-        /* showGate already ran for a 401. */
-      })
-  }
+  // Always ask: the session cookie may sign this phone in without a stored code.
+  enterApp().catch(function (error) {
+    if (error && error.message === 'unauthorized') {
+      /* showGate already ran. */
+      return
+    }
+
+    if (!paired) {
+      showGate('')
+      return
+    }
+
+    // Paired, but the desktop app is asleep or off the network. Stay signed in
+    // and let the stream reconnect on its own rather than asking for the code.
+    showApp()
+    setConnectionDot('is-down', 'Waiting for the desktop app…')
+    openStream()
+  })
 })()

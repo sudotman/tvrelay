@@ -21,6 +21,9 @@ import { WEB_ASSETS } from './assets'
 const MAX_BODY_BYTES = 64 * 1024
 const HEARTBEAT_MS = 20_000
 const ICON_CACHE_HEADER = 'public, max-age=86400'
+const SESSION_COOKIE = 'relay_session'
+/** A year: a paired phone should never have to be shown the code again. */
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 365
 
 interface WebRemoteServerOptions {
   settings: SettingsStore
@@ -74,6 +77,20 @@ function tokensMatch(expected: string, received: string): boolean {
   const left = createHash('sha256').update(expected).digest()
   const right = createHash('sha256').update(received).digest()
   return timingSafeEqual(left, right)
+}
+
+function parseCookies(header: string | undefined): Record<string, string> {
+  const jar: Record<string, string> = {}
+
+  for (const part of (header ?? '').split(';')) {
+    const separator = part.indexOf('=')
+
+    if (separator > 0) {
+      jar[part.slice(0, separator).trim()] = decodeURIComponent(part.slice(separator + 1).trim())
+    }
+  }
+
+  return jar
 }
 
 function readBody(request: http.IncomingMessage): Promise<string> {
@@ -251,11 +268,34 @@ export class WebRemoteServer extends EventEmitter {
     })
   }
 
+  /**
+   * The cookie is what keeps a paired phone signed in. The header and the query
+   * parameter stay for the scanned link and for clients that keep no cookies.
+   */
   private authorize(request: http.IncomingMessage, url: URL): boolean {
-    const provided =
-      (request.headers['x-relay-token'] as string | undefined) ?? url.searchParams.get('t') ?? ''
+    const cookies = parseCookies(request.headers.cookie)
+    const candidates = [
+      request.headers['x-relay-token'] as string | undefined,
+      url.searchParams.get('t'),
+      cookies[SESSION_COOKIE]
+    ]
 
-    return provided.length > 0 && tokensMatch(this.settings.token, provided)
+    return candidates.some(
+      (candidate) => Boolean(candidate) && tokensMatch(this.settings.token, candidate as string)
+    )
+  }
+
+  /**
+   * HttpOnly so page scripts can never read the code back out, and SameSite=Lax
+   * so no other site can make the phone fire a command with the cookie attached.
+   * Rotating the code changes the value every cookie is compared against, so
+   * "New code" still signs every phone out.
+   */
+  private sessionCookie(token: string): string {
+    return (
+      `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; ` +
+      `Max-Age=${SESSION_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax`
+    )
   }
 
   private async handleRequest(
@@ -272,10 +312,20 @@ export class WebRemoteServer extends EventEmitter {
     const asset = WEB_ASSETS[path === '/' ? '/index.html' : path]
 
     if (asset) {
-      response.writeHead(200, {
+      const headers: http.OutgoingHttpHeaders = {
         'Content-Type': asset.contentType,
         'Cache-Control': 'no-cache'
-      })
+      }
+
+      // A scanned link carries the code, so pair the phone on that first load
+      // and it never sees the gate again.
+      const scanned = url.searchParams.get('t')
+
+      if (scanned && tokensMatch(this.settings.token, scanned)) {
+        headers['Set-Cookie'] = this.sessionCookie(this.settings.token)
+      }
+
+      response.writeHead(200, headers)
       response.end(asset.body)
       return
     }
@@ -283,6 +333,12 @@ export class WebRemoteServer extends EventEmitter {
     if (!path.startsWith('/api/')) {
       response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
       response.end('Not found')
+      return
+    }
+
+    // Pairing answers ahead of the gate: it is how a phone gets past it.
+    if (path === '/api/session') {
+      await this.handleSession(request, response)
       return
     }
 
@@ -314,6 +370,44 @@ export class WebRemoteServer extends EventEmitter {
       response.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' })
       response.end(JSON.stringify({ error: message }))
     }
+  }
+
+  /** Trades a typed access code for the session cookie that keeps a phone paired. */
+  private async handleSession(
+    request: http.IncomingMessage,
+    response: http.ServerResponse
+  ): Promise<void> {
+    const json = (status: number, body: unknown, cookie?: string): void => {
+      response.writeHead(status, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        ...(cookie ? { 'Set-Cookie': cookie } : {})
+      })
+      response.end(JSON.stringify(body))
+    }
+
+    if (request.method !== 'POST') {
+      json(405, { error: 'Method not allowed.' })
+      return
+    }
+
+    let code = ''
+
+    try {
+      const raw = await readBody(request)
+      const payload = raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
+      code = String(payload.code ?? '').trim().toUpperCase()
+    } catch {
+      json(400, { error: 'Could not read that request.' })
+      return
+    }
+
+    if (!code || !tokensMatch(this.settings.token, code)) {
+      json(401, { error: 'That code was not accepted.' })
+      return
+    }
+
+    json(200, { paired: true }, this.sessionCookie(this.settings.token))
   }
 
   private async routeApi(

@@ -160,8 +160,9 @@ export function PhoneView() {
         ) : null}
 
         <p className="muted fine-print">
-          Anyone on this network who has the access code can drive the TV. Keep it off on networks you do
-          not trust, and generate a new code to sign every phone out.
+          Anyone on this network who has the access code can drive the TV. A phone is asked for it once
+          and stays signed in after that, so keep this off on networks you do not trust, and generate a
+          new code to sign every phone out.
         </p>
       </section>
     </div>
