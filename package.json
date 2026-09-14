@@ -1,6 +1,6 @@
 {
   "name": "android-tv-remote-desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Relay — a wireless-first Android TV remote for macOS and Windows, powered by ADB.",
   "author": "Satyam Kashyap",
   "type": "module",
