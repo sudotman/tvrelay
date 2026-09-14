@@ -1,6 +1,7 @@
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import type {
   ActionFeedback,
+  AppUpdateStatus,
   ConnectionState,
   DiagnosticsStatus,
   DiscoveredNativeDevice,
@@ -75,6 +76,7 @@ export function useRelayState() {
   const [paletteQuery, setPaletteQuery] = useState('')
   const [selectedApk, setSelectedApk] = useState<SelectedApkFile | null>(null)
   const [webRemote, setWebRemote] = useState<WebRemoteStatus | null>(null)
+  const [appUpdate, setAppUpdate] = useState<AppUpdateStatus | null>(null)
   const deferredAppsQuery = useDeferredValue(appsQuery)
   const deferredPaletteQuery = useDeferredValue(paletteQuery)
   const diagnosticsRequestRef = useRef(0)
@@ -150,7 +152,8 @@ export function useRelayState() {
     apps,
     devices,
     quickActions: diagnostics?.quickActions ?? [],
-    recommendedActions
+    recommendedActions,
+    appUpdateState: appUpdate?.state ?? 'idle'
   })
   const visiblePaletteItems = filterPaletteItems(paletteItems, deferredPaletteQuery)
   const latestAction = actionFeed[0] ?? null
@@ -225,6 +228,7 @@ export function useRelayState() {
     void refreshDiagnostics()
     void scanNativeDevices()
     void window.tvRemoteApi.getWebRemoteStatus().then(setWebRemote)
+    void window.tvRemoteApi.getAppUpdateStatus().then(setAppUpdate)
 
     const unsubscribeState = window.tvRemoteApi.onConnectionStateChanged((state) => {
       setConnectionState(state)
@@ -238,11 +242,13 @@ export function useRelayState() {
     })
 
     const unsubscribeWebRemote = window.tvRemoteApi.onWebRemoteStatusChanged(setWebRemote)
+    const unsubscribeAppUpdate = window.tvRemoteApi.onAppUpdateStatusChanged(setAppUpdate)
 
     return () => {
       unsubscribeState()
       unsubscribeDevices()
       unsubscribeWebRemote()
+      unsubscribeAppUpdate()
     }
   }, [])
 
@@ -907,6 +913,46 @@ export function useRelayState() {
     }
   }
 
+  async function checkForAppUpdates(): Promise<void> {
+    setBusy('checkForUpdates')
+    try {
+      const status = await window.tvRemoteApi.checkForAppUpdates()
+      setAppUpdate(status)
+
+      if (status.state === 'not-available') {
+        publishFeedback(
+          createLocalFeedback({
+            kind: 'system',
+            status: 'success',
+            title: "You're up to date",
+            detail: `Relay ${status.currentVersion} is the latest version.`
+          })
+        )
+      } else if (status.state === 'error') {
+        publishFeedback(
+          createLocalFeedback({
+            kind: 'system',
+            status: 'error',
+            title: 'Could not check for updates',
+            detail: status.message ?? 'The update check failed.'
+          })
+        )
+      }
+    } catch (error) {
+      publishErrorFeedback('Could not check for updates.', error, 'system')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function openAppUpdateReleasePage(): Promise<void> {
+    await window.tvRemoteApi.openAppUpdateReleasePage()
+  }
+
+  async function quitAndInstallAppUpdate(): Promise<void> {
+    await window.tvRemoteApi.quitAndInstallAppUpdate()
+  }
+
   async function chooseApkFile(): Promise<void> {
     setBusy('choose-apk')
     try {
@@ -1094,6 +1140,15 @@ export function useRelayState() {
 
     if (item.id === 'system:sideload') {
       await chooseApkFile()
+      return
+    }
+
+    if (item.id === 'system:checkForUpdates') {
+      if (appUpdate?.state === 'downloaded') {
+        await quitAndInstallAppUpdate()
+      } else {
+        await checkForAppUpdates()
+      }
     }
   }
 
@@ -1122,6 +1177,10 @@ export function useRelayState() {
     foregroundApp,
     scrcpyStatus,
     webRemote,
+    appUpdate,
+    checkForAppUpdates,
+    openAppUpdateReleasePage,
+    quitAndInstallAppUpdate,
     isConnected,
     statusMessage,
     busy,

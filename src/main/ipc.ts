@@ -23,6 +23,7 @@ import type { AdbClient } from './services/adb/adbClient'
 import type { ScrcpyController } from './services/scrcpyController'
 import type { SideloadController } from './services/sideloadController'
 import type { WebRemoteServer } from './services/web/webRemoteServer'
+import type { UpdateService } from './services/updateService'
 
 interface RegisterIpcOptions {
   deviceManager: DeviceManager
@@ -32,6 +33,7 @@ interface RegisterIpcOptions {
   scrcpyController: ScrcpyController
   sideloadController: SideloadController
   webRemoteServer: WebRemoteServer
+  updateService: UpdateService
   adbLocator: AdbLocator
   adbClient: AdbClient
   getMainWindow: () => BrowserWindow | null
@@ -46,6 +48,7 @@ export function registerIpc(options: RegisterIpcOptions): void {
     scrcpyController,
     sideloadController,
     webRemoteServer,
+    updateService,
     adbLocator,
     adbClient,
     getMainWindow
@@ -119,6 +122,14 @@ export function registerIpc(options: RegisterIpcOptions): void {
     webRemoteServer.update(input)
   )
 
+  ipcMain.handle(IPC_CHANNELS.appUpdateGetStatus, () => updateService.getStatus())
+
+  ipcMain.handle(IPC_CHANNELS.appUpdateCheck, () => updateService.checkForUpdates())
+
+  ipcMain.handle(IPC_CHANNELS.appUpdateOpenReleasePage, () => updateService.openReleasePage())
+
+  ipcMain.handle(IPC_CHANNELS.appUpdateQuitAndInstall, () => updateService.quitAndInstall())
+
   ipcMain.handle(IPC_CHANNELS.diagnosticsGetStatus, async () => {
     const adbInfo = await adbLocator.locate()
     const version =
@@ -169,5 +180,9 @@ export function registerIpc(options: RegisterIpcOptions): void {
 
   webRemoteServer.on('status', (status) => {
     getMainWindow()?.webContents.send(IPC_CHANNELS.webRemoteStatusChanged, status)
+  })
+
+  updateService.on('status', (status) => {
+    getMainWindow()?.webContents.send(IPC_CHANNELS.appUpdateStatusChanged, status)
   })
 }

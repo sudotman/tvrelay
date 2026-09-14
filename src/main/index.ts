@@ -1,7 +1,10 @@
 import path from 'node:path'
 import fs from 'node:fs'
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
+import electronUpdater from 'electron-updater'
 import { registerIpc } from './ipc'
+
+const { autoUpdater } = electronUpdater
 import { AdbLocator } from './services/adb/adbLocator'
 import { AdbClient } from './services/adb/adbClient'
 import { ElectronDeviceStore } from './services/deviceStore'
@@ -14,6 +17,10 @@ import { ScrcpyController } from './services/scrcpyController'
 import { SideloadController } from './services/sideloadController'
 import { ElectronSettingsStore } from './services/settingsStore'
 import { WebRemoteServer } from './services/web/webRemoteServer'
+import { UpdateService } from './services/updateService'
+
+/** How long to wait after the window opens before checking for an update, so startup never competes with it. */
+const UPDATE_CHECK_DELAY_MS = 5000
 
 /**
  * Electron derives `userData` from the product name, so renaming the app to
@@ -137,6 +144,14 @@ async function bootstrap(): Promise<void> {
     actionController
   })
 
+  const updateService = new UpdateService({
+    platform: process.platform,
+    currentVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    autoUpdater: process.platform === 'win32' ? autoUpdater : undefined,
+    openExternal: (url) => shell.openExternal(url)
+  })
+
   registerIpc({
     deviceManager,
     remoteController,
@@ -145,6 +160,7 @@ async function bootstrap(): Promise<void> {
     scrcpyController,
     sideloadController,
     webRemoteServer,
+    updateService,
     adbLocator,
     adbClient,
     getMainWindow: () => mainWindow
@@ -159,6 +175,14 @@ async function bootstrap(): Promise<void> {
   })
 
   await createMainWindow()
+
+  if (app.isPackaged) {
+    setTimeout(() => {
+      updateService.checkForUpdates().catch((error) => {
+        console.error('Update check failed.', error)
+      })
+    }, UPDATE_CHECK_DELAY_MS)
+  }
 }
 
 function ensureBootstrapped(): Promise<void> {

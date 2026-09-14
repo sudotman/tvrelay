@@ -5,6 +5,7 @@ import { useRelayState } from './useRelayState'
 import { CommandPalette } from './components/CommandPalette'
 import { Toasts } from './components/Toasts'
 import { TopBar } from './components/TopBar'
+import { UpdateBanner } from './components/UpdateBanner'
 import { AppsView } from './views/AppsView'
 import { PhoneView } from './views/PhoneView'
 import { RemoteView } from './views/RemoteView'
@@ -110,6 +111,7 @@ export function App() {
         <TopBar />
         <Workspace />
         <StatusLine />
+        <UpdateBanner />
         <CommandPalette />
         <Toasts />
       </div>

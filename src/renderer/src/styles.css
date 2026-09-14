@@ -793,6 +793,45 @@ select option {
   }
 }
 
+/* A persistent, dismiss-free strip: it only mounts once there is an update to act on. */
+.update-banner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin: 0 var(--s-5) var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--dim);
+  animation: toast-in var(--dur-3) var(--ease-spring) both;
+}
+
+.update-banner > svg {
+  flex-shrink: 0;
+  color: var(--ember);
+}
+
+.update-banner-copy {
+  display: grid;
+  gap: 0.05rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.update-banner-copy strong {
+  font-size: var(--t-sm);
+  font-weight: var(--w-semibold);
+  color: var(--ink);
+}
+
+.update-banner-copy span {
+  color: var(--faint);
+  font-size: var(--t-xs);
+}
+
 /* ==========================================================================
    Top bar — floating nav, device chip, nothing else
    ========================================================================== */

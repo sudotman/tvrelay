@@ -115,6 +115,30 @@ Build only Windows packages:
 npm run release:build:win
 ```
 
+## Auto-Updates
+
+Relay checks GitHub Releases for a newer version shortly after launch, and on
+demand from the command palette ("Check for Updates").
+
+- **Windows** uses [`electron-updater`](https://www.electron.build/auto-update),
+  which silently downloads the new `.exe` in the background and shows a
+  "Restart Now" banner once it's ready. This relies on `latest.yml` and the
+  `.blockmap` file that `electron-builder` generates next to the installer —
+  the release workflow uploads those alongside the `.exe`/`.zip`, and removing
+  them from the release breaks update detection.
+- **macOS** builds are unsigned and unnotarized (see below), and
+  `electron-updater`'s Squirrel.Mac path refuses to verify updates against an
+  unsigned running app. So on mac, Relay just compares its version against the
+  latest GitHub release and shows a banner linking to the release page — the
+  user downloads and replaces the app manually, same as today.
+
+Both platforms read the repo to check (`build.publish` in `package.json`,
+currently `sudotman/tvrelay`) — update that if the repo ever moves.
+
+If mac signing and notarization are added later, `src/main/services/updateService.ts`
+can be extended to wire up `electron-updater`'s mac provider the same way it
+does for Windows.
+
 ## Notes
 
 - `build.appId` deliberately stays `com.satyamkashyap.androidtvremote` even

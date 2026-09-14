@@ -141,4 +141,6 @@ jobs:
             release-artifacts/macos/*.zip
             release-artifacts/windows/*.exe
             release-artifacts/windows/*.zip
+            release-artifacts/windows/*.yml
+            release-artifacts/windows/*.blockmap
           token: ${{ secrets.GITHUB_TOKEN }}

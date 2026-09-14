@@ -354,3 +354,25 @@ export interface UpdateWebRemoteInput {
   port?: number
   rotateToken?: boolean
 }
+
+export type AppUpdateState =
+  | 'idle'
+  | 'checking'
+  | 'not-available'
+  | 'available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error'
+
+export interface AppUpdateStatus {
+  state: AppUpdateState
+  currentVersion: string
+  latestVersion?: string
+  /** GitHub release page for the new version. Always set once one is known, used as the mac fallback link. */
+  releaseUrl?: string
+  /** 0-100, only meaningful while `state` is 'downloading'. */
+  progressPercent?: number
+  message?: string
+  /** True on Windows, where electron-updater can silently download and install. False on mac, where the user opens `releaseUrl` themselves. */
+  canAutoInstall: boolean
+}

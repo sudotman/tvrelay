@@ -1,5 +1,6 @@
 import type {
   ActionFeedback,
+  AppUpdateStatus,
   BeginNativePairingInput,
   CompleteNativePairingInput,
   ConnectDeviceInput,
@@ -54,9 +55,14 @@ export interface TvRemoteApi {
   installApk: (input: InstallApkInput) => Promise<ActionFeedback>
   getWebRemoteStatus: () => Promise<WebRemoteStatus>
   updateWebRemote: (input: UpdateWebRemoteInput) => Promise<WebRemoteStatus>
+  getAppUpdateStatus: () => Promise<AppUpdateStatus>
+  checkForAppUpdates: () => Promise<AppUpdateStatus>
+  openAppUpdateReleasePage: () => Promise<void>
+  quitAndInstallAppUpdate: () => Promise<void>
   onConnectionStateChanged: (listener: (state: ConnectionState) => void) => () => void
   onDevicesChanged: (listener: (devices: SavedDevice[]) => void) => () => void
   onWebRemoteStatusChanged: (listener: (status: WebRemoteStatus) => void) => () => void
+  onAppUpdateStatusChanged: (listener: (status: AppUpdateStatus) => void) => () => void
 }
 
 export const IPC_CHANNELS = {
@@ -88,7 +94,12 @@ export const IPC_CHANNELS = {
   sideloadInstallApk: 'sideload.installApk',
   webRemoteGetStatus: 'webRemote.getStatus',
   webRemoteUpdate: 'webRemote.update',
+  appUpdateGetStatus: 'appUpdate.getStatus',
+  appUpdateCheck: 'appUpdate.check',
+  appUpdateOpenReleasePage: 'appUpdate.openReleasePage',
+  appUpdateQuitAndInstall: 'appUpdate.quitAndInstall',
   connectionStateChanged: 'events.connectionStateChanged',
   devicesChanged: 'events.devicesChanged',
-  webRemoteStatusChanged: 'events.webRemoteStatusChanged'
+  webRemoteStatusChanged: 'events.webRemoteStatusChanged',
+  appUpdateStatusChanged: 'events.appUpdateStatusChanged'
 } as const

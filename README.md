@@ -26,6 +26,12 @@ builds are unsigned. on macOS the first launch needs a right-click → **Open**;
 
 Intel Macs are not covered by the current release builds.
 
+once installed, Relay checks for updates on launch (and via **⌘K → Check for
+Updates**). on Windows it downloads and installs new versions in the
+background; on macOS it links you to the new release to download by hand,
+since the build is unsigned. see [docs/RELEASING.md](docs/RELEASING.md#auto-updates)
+for details.
+
 ## interface
 
 the app is dark only, built around one glass panel in a warm near-black room.

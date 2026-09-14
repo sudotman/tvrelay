@@ -1,5 +1,6 @@
 import type {
   ActionFeedback,
+  AppUpdateState,
   BackendHealthSnapshot,
   ConnectionBackend,
   ConnectionState,
@@ -468,6 +469,7 @@ export function buildCommandPaletteItems(input: {
   devices: SavedDevice[]
   quickActions: QuickAction[]
   recommendedActions: RecommendedAction[]
+  appUpdateState: AppUpdateState
 }): CommandPaletteItem[] {
   const needsConnection = input.isConnected ? undefined : 'Connect a TV first.'
   const needsApps = input.appsReady ? undefined : 'ADB app access is required.'
@@ -499,6 +501,13 @@ export function buildCommandPaletteItems(input: {
       section: 'Power Tools',
       disabled: Boolean(needsConnection || !input.typingReady),
       disabledReason: needsConnection ?? 'ADB fallback is required.'
+    },
+    {
+      id: 'system:checkForUpdates',
+      label: input.appUpdateState === 'downloaded' ? 'Restart to Finish Updating' : 'Check for Updates',
+      detail: 'See if a newer version of Relay is available.',
+      section: 'Power Tools',
+      disabled: input.appUpdateState === 'checking' || input.appUpdateState === 'downloading'
     },
     {
       id: 'apps:fetch',

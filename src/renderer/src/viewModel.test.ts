@@ -72,7 +72,8 @@ describe('renderer view model', () => {
       apps: [],
       devices: [],
       quickActions: [],
-      recommendedActions: []
+      recommendedActions: [],
+      appUpdateState: 'idle'
     })
 
     expect(items.find((item) => item.id === 'system:wake')?.disabledReason).toContain('ADB')
